@@ -467,6 +467,300 @@ Please generate a comprehensive {report_type} report in {format} format about {t
 
         return results
 
+    async def execute_recipe(
+        self,
+        recipe_context: Dict[str, Any],
+        claude_session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute recipe-driven report generation.
+
+        This method executes a work_recipe's execution template with pre-validated
+        parameters and context requirements. The recipe context contains all the
+        instructions needed for deterministic output generation.
+
+        Args:
+            recipe_context: Execution context from RecipeLoader.generate_execution_context()
+                Expected structure:
+                {
+                    "system_prompt_additions": str,  # Recipe-specific system prompt
+                    "task_breakdown": List[str],     # Step-by-step instructions
+                    "validation_instructions": str,  # Output validation requirements
+                    "output_specification": {        # Expected output format
+                        "format": str,
+                        "required_sections": List[str],
+                        "validation_rules": dict
+                    },
+                    "deliverable_intent": {          # Recipe purpose
+                        "purpose": str,
+                        "audience": str,
+                        "outcome": str
+                    }
+                }
+            claude_session_id: Optional Claude session ID to resume
+
+        Returns:
+            Recipe execution results:
+            {
+                "output_count": int,
+                "work_outputs": List[dict],
+                "validation_results": {
+                    "passed": bool,
+                    "errors": List[str]
+                },
+                "claude_session_id": str,
+                "execution_time_ms": int
+            }
+        """
+        logger.info(f"ReportingAgentSDK.execute_recipe: {recipe_context.get('deliverable_intent', {}).get('purpose', 'Unknown recipe')}")
+
+        # Track execution time
+        start_time = datetime.utcnow()
+
+        # 1. Build enhanced system prompt (base + recipe additions)
+        recipe_system_prompt = REPORTING_AGENT_SYSTEM_PROMPT + "\n\n---\n\n# Recipe-Specific Instructions\n\n"
+        recipe_system_prompt += recipe_context.get("system_prompt_additions", "")
+
+        # Add capabilities info
+        recipe_system_prompt += f"""
+
+**Your Capabilities**:
+- Memory: Available (SubstrateMemoryAdapter)
+- Default Format: {self.default_format}
+- Skills: PDF, XLSX, PPTX, DOCX (file generation)
+- Code Execution: Python (data processing, charts)
+- Session ID: {self.current_session.id if self.current_session else 'N/A'}
+"""
+
+        # Inject knowledge modules if provided
+        if self.knowledge_modules:
+            recipe_system_prompt += "\n\n---\n\n# 📚 YARNNN Knowledge Modules (Procedural Knowledge)\n\n"
+            recipe_system_prompt += "The following knowledge modules provide guidelines on how to work effectively in YARNNN:\n\n"
+            recipe_system_prompt += self.knowledge_modules
+
+        # 2. Build user prompt from task_breakdown
+        deliverable_intent = recipe_context.get("deliverable_intent", {})
+        task_breakdown = recipe_context.get("task_breakdown", [])
+        validation_instructions = recipe_context.get("validation_instructions", "")
+        output_spec = recipe_context.get("output_specification", {})
+
+        task_instructions = "\n".join([
+            f"{i+1}. {task}"
+            for i, task in enumerate(task_breakdown)
+        ])
+
+        user_prompt = f"""**Deliverable Intent**
+Purpose: {deliverable_intent.get('purpose', 'Generate report')}
+Audience: {deliverable_intent.get('audience', 'General audience')}
+Expected Outcome: {deliverable_intent.get('outcome', 'Professional deliverable')}
+
+**Task Breakdown**:
+{task_instructions}
+
+**Validation Requirements**:
+{validation_instructions}
+
+**Expected Output Specification**:
+- Format: {output_spec.get('format', 'Unknown')}
+- Required Sections: {', '.join(output_spec.get('required_sections', []))}
+- Validation Rules: {output_spec.get('validation_rules', {})}
+
+**Important**:
+Execute this recipe and emit work_output with validation metadata using the emit_work_output tool.
+"""
+
+        # 3. Execute via ClaudeSDKClient (same pattern as generate method)
+        response_text = ""
+        new_session_id = None
+        work_outputs = []
+
+        try:
+            # Create temporary options with recipe system prompt
+            recipe_options = ClaudeAgentOptions(
+                model=self.model,
+                system_prompt=recipe_system_prompt,
+                mcp_servers=self._options.mcp_servers,
+                allowed_tools=self._options.allowed_tools,
+                setting_sources=self._options.setting_sources,
+            )
+
+            async with ClaudeSDKClient(options=recipe_options) as client:
+                # Connect (resume existing session or start new)
+                if claude_session_id:
+                    logger.info(f"Resuming Claude session: {claude_session_id}")
+                    await client.connect(session_id=claude_session_id)
+                else:
+                    logger.info("Starting new Claude session for recipe execution")
+                    await client.connect()
+
+                # Send query
+                await client.query(user_prompt)
+
+                # Collect responses and parse tool results
+                async for message in client.receive_response():
+                    logger.debug(f"SDK message type: {type(message).__name__}")
+
+                    # Process content blocks
+                    if hasattr(message, 'content') and isinstance(message.content, list):
+                        for block in message.content:
+                            if not hasattr(block, 'type'):
+                                continue
+
+                            block_type = block.type
+                            logger.debug(f"SDK block type: {block_type}")
+
+                            # Text blocks
+                            if block_type == 'text' and hasattr(block, 'text'):
+                                response_text += block.text
+
+                            # Tool result blocks (extract work outputs)
+                            elif block_type == 'tool_result':
+                                tool_name = getattr(block, 'tool_name', '')
+                                logger.debug(f"Tool result from: {tool_name}")
+
+                                if tool_name == 'emit_work_output':
+                                    try:
+                                        result_content = getattr(block, 'content', None)
+                                        if result_content:
+                                            import json
+                                            if isinstance(result_content, str):
+                                                output_data = json.loads(result_content)
+                                            else:
+                                                output_data = result_content
+
+                                            # Convert to WorkOutput object if needed
+                                            from yarnnn_agents.tools import WorkOutput
+                                            if isinstance(output_data, dict):
+                                                work_output = WorkOutput(**output_data)
+                                            else:
+                                                work_output = output_data
+                                            work_outputs.append(work_output)
+                                            logger.info(f"Captured work output: {output_data.get('title', 'untitled')}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to parse work output: {e}", exc_info=True)
+
+                # Get session ID from client
+                new_session_id = getattr(client, 'session_id', None)
+                logger.debug(f"Session ID retrieved: {new_session_id}")
+
+        except Exception as e:
+            logger.error(f"Recipe execution failed: {e}")
+            raise
+
+        # 4. Validate outputs against recipe output_specification
+        validation_results = self._validate_recipe_outputs(work_outputs, output_spec)
+
+        # Log results
+        logger.info(
+            f"Recipe execution produced {len(work_outputs)} structured outputs: "
+            f"{[o.output_type for o in work_outputs]}"
+        )
+
+        # Update agent session with new claude_session_id
+        if new_session_id and self.current_session:
+            self.current_session.update_claude_session(new_session_id)
+            logger.info(f"Stored Claude session: {new_session_id}")
+
+        # Calculate execution time
+        end_time = datetime.utcnow()
+        execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
+
+        return {
+            "output_count": len(work_outputs),
+            "work_outputs": [o.to_dict() for o in work_outputs],
+            "validation_results": validation_results,
+            "claude_session_id": new_session_id,
+            "execution_time_ms": execution_time_ms,
+            "response_text": response_text,  # For debugging
+        }
+
+    def _validate_recipe_outputs(
+        self,
+        outputs: List[Any],
+        output_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Validate outputs against recipe output specification.
+
+        Args:
+            outputs: List of WorkOutput objects
+            output_spec: Recipe output specification with format, required_sections, validation_rules
+
+        Returns:
+            Validation results:
+            {
+                "passed": bool,
+                "errors": List[str],
+                "warnings": List[str]
+            }
+        """
+        validation = {
+            "passed": True,
+            "errors": [],
+            "warnings": []
+        }
+
+        if not outputs:
+            validation["passed"] = False
+            validation["errors"].append("No outputs generated")
+            return validation
+
+        expected_format = output_spec.get("format")
+        required_sections = output_spec.get("required_sections", [])
+        validation_rules = output_spec.get("validation_rules", {})
+
+        for idx, output in enumerate(outputs):
+            output_dict = output.to_dict() if hasattr(output, 'to_dict') else output
+
+            # Check format if specified in metadata
+            output_format = output_dict.get("metadata", {}).get("format")
+            if expected_format and output_format and output_format != expected_format:
+                validation["errors"].append(
+                    f"Output {idx}: Expected format '{expected_format}', got '{output_format}'"
+                )
+                validation["passed"] = False
+
+            # Check required sections (if output has body text)
+            body = output_dict.get("body", "")
+            if required_sections and body:
+                for section in required_sections:
+                    if section.lower() not in body.lower():
+                        validation["warnings"].append(
+                            f"Output {idx}: Missing recommended section '{section}'"
+                        )
+
+            # Check slide_count_in_range for PPTX (if specified)
+            if validation_rules.get("slide_count_in_range"):
+                slide_count = output_dict.get("metadata", {}).get("slide_count")
+                if slide_count:
+                    # Would need min/max from configurable_parameters to validate
+                    # For now, just check existence
+                    logger.debug(f"Output {idx}: slide_count = {slide_count}")
+
+            # Check format_is_pptx (if specified)
+            if validation_rules.get("format_is_pptx"):
+                if output_format != "pptx":
+                    validation["errors"].append(
+                        f"Output {idx}: Expected PPTX format, got '{output_format}'"
+                    )
+                    validation["passed"] = False
+
+            # Check required_sections_present (if specified)
+            if validation_rules.get("required_sections_present") and required_sections:
+                missing_sections = [
+                    section for section in required_sections
+                    if section.lower() not in body.lower()
+                ]
+                if missing_sections:
+                    validation["errors"].append(
+                        f"Output {idx}: Missing required sections: {', '.join(missing_sections)}"
+                    )
+                    validation["passed"] = False
+
+        logger.info(f"Validation results: passed={validation['passed']}, errors={len(validation['errors'])}, warnings={len(validation['warnings'])}")
+
+        return validation
+
 
 # ============================================================================
 # Convenience Functions
