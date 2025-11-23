@@ -134,8 +134,8 @@ class SubstrateMemoryAdapter(MemoryProvider):
         if self._config_cache is not None:
             return self._config_cache
 
-        if not self.project_id or not self.agent_type:
-            logger.debug("No project_id or agent_type, skipping config fetch")
+        if not self.agent_type:
+            logger.debug("No agent_type, skipping config fetch")
             self._config_cache = {}
             return {}
 
@@ -143,23 +143,46 @@ class SubstrateMemoryAdapter(MemoryProvider):
             # Query work-platform DB via supabase_admin_client
             from app.utils.supabase_client import supabase_admin_client
 
-            response = supabase_admin_client.table("project_agents").select(
-                "config"
-            ).eq("project_id", self.project_id).eq(
+            # Determine basket_id for query
+            basket_id = self.basket_id
+
+            # If we only have project_id, fetch basket_id from projects table
+            if not basket_id and self.project_id:
+                project_response = supabase_admin_client.table("projects").select(
+                    "basket_id"
+                ).eq("id", self.project_id).limit(1).execute()
+
+                if project_response.data and len(project_response.data) > 0:
+                    basket_id = project_response.data[0].get("basket_id")
+
+            if not basket_id:
+                logger.debug("No basket_id available, skipping config fetch")
+                self._config_cache = {}
+                return {}
+
+            # Query agent_sessions for state/metadata (config was removed in Phase 2e)
+            response = supabase_admin_client.table("agent_sessions").select(
+                "state, metadata"
+            ).eq("basket_id", basket_id).eq(
                 "agent_type", self.agent_type
-            ).eq("is_active", True).limit(1).execute()
+            ).limit(1).execute()
 
             if response.data and len(response.data) > 0:
-                self._config_cache = response.data[0].get("config", {})
-                logger.info(f"Loaded config for {self.agent_type} agent")
+                # Merge state and metadata as config replacement
+                state = response.data[0].get("state", {})
+                metadata = response.data[0].get("metadata", {})
+                self._config_cache = {**state, **metadata}
+
+                if self._config_cache:
+                    logger.info(f"Loaded state/metadata for {self.agent_type} agent")
             else:
-                logger.debug(f"No active {self.agent_type} agent found for project {self.project_id}")
+                logger.debug(f"No active {self.agent_type} agent session found")
                 self._config_cache = {}
 
             return self._config_cache
 
         except Exception as e:
-            logger.warning(f"Failed to load agent config: {e}")
+            logger.warning(f"Failed to load agent session state: {e}")
             self._config_cache = {}
             return {}
 

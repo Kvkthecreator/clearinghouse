@@ -686,19 +686,25 @@ Examples:
         try:
             from app.utils.supabase_client import supabase_admin_client
 
-            response = supabase_admin_client.table("project_agents").select(
-                "config"
+            # Query agent_sessions for state/metadata (config was removed in Phase 2e)
+            response = supabase_admin_client.table("agent_sessions").select(
+                "state, metadata"
             ).eq("basket_id", self.basket_id).eq(
                 "agent_type", agent_type
-            ).eq("is_active", True).limit(1).execute()
+            ).limit(1).execute()
 
             if response.data and len(response.data) > 0:
-                config = response.data[0].get("config", {})
-                logger.info(f"Staging: Loaded config for {agent_type}")
+                # Merge state and metadata as config replacement
+                state = response.data[0].get("state", {})
+                metadata = response.data[0].get("metadata", {})
+                config = {**state, **metadata}
+
+                if config:
+                    logger.info(f"Staging: Loaded state/metadata for {agent_type}")
                 return config
             return {}
         except Exception as e:
-            logger.warning(f"Failed to load agent config: {e}")
+            logger.warning(f"Failed to load agent session state: {e}")
             return {}
 
     async def _execute_work_orchestration(self, tool_input: Dict[str, Any]) -> str:
