@@ -954,34 +954,37 @@ async def get_project_work_ticket(
         if project["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # Fetch work session
+        # Fetch work session (Phase 2e schema)
         session_response = supabase.table("work_tickets").select(
             """
             id,
-            project_id,
-            project_agent_id,
-            agent_work_request_id,
-            task_intent,
-            task_type,
+            work_request_id,
+            agent_session_id,
+            workspace_id,
+            basket_id,
+            agent_type,
             status,
-            task_parameters,
             metadata,
             created_at,
             started_at,
-            ended_at
+            completed_at,
+            error_message
             """
-        ).eq("id", ticket_id).eq("project_id", project_id).single().execute()
+        ).eq("id", ticket_id).single().execute()
 
         if not session_response.data:
             raise HTTPException(status_code=404, detail="Work session not found")
 
         session = session_response.data
 
-        # Fetch agent session (refactored from project_agents)
-        # The project_agent_id in work_tickets should now point to an agent_session
+        # Verify work session belongs to this project's basket
+        if session["basket_id"] != basket_id:
+            raise HTTPException(status_code=404, detail="Work session not found in this project")
+
+        # Fetch agent session
         agent_session_response = supabase.table("agent_sessions").select(
             "id, agent_type"
-        ).eq("id", session["project_agent_id"]).single().execute()
+        ).eq("id", session["agent_session_id"]).single().execute()
 
         if not agent_session_response.data:
             raise HTTPException(status_code=404, detail="Agent session not found")
@@ -1003,30 +1006,30 @@ async def get_project_work_ticket(
             f"{outputs_count} outputs"
         )
 
-        # Extract metadata fields
+        # Extract metadata fields (Phase 2e: custom fields stored in metadata JSONB)
         metadata = session.get("metadata") or {}
-        priority = metadata.get("priority", 5)
-        error_message = metadata.get("error_message")
-        result_summary = metadata.get("result_summary")
+        priority = metadata.get("priority_int", 5)
+        task_intent = metadata.get("task_intent", "")
+        task_configuration = metadata.get("task_configuration", {})
 
         return WorkTicketDetailResponse(
             ticket_id=session["id"],
-            project_id=session["project_id"],
+            project_id=project_id,  # From URL param, not session (no FK)
             project_name=project["name"],
             agent_id=agent_session["id"],
             agent_type=agent_session["agent_type"],
             agent_display_name=agent_display_name,
-            task_description=session["task_intent"],  # Fixed: use task_intent
+            task_description=task_intent,  # From metadata
             status=session["status"],
-            task_type=session["task_type"],
+            task_type=session["agent_type"],  # agent_type is the task type
             priority=priority,  # From metadata
-            context=session["task_parameters"] or {},  # Fixed: use task_parameters
-            work_request_id=session["agent_work_request_id"],
+            context=task_configuration,  # From metadata
+            work_request_id=session["work_request_id"],  # Correct FK field
             created_at=session["created_at"],
-            updated_at=session.get("started_at"),  # Use started_at as updated_at proxy
-            completed_at=session.get("ended_at"),  # Fixed: use ended_at
-            error_message=error_message,  # From metadata
-            result_summary=result_summary,  # From metadata
+            updated_at=session.get("started_at"),
+            completed_at=session.get("completed_at"),  # Correct field name
+            error_message=session.get("error_message"),  # Direct field, not metadata
+            result_summary=metadata.get("result_summary"),  # From metadata if exists
             outputs_count=outputs_count,
         )
 
