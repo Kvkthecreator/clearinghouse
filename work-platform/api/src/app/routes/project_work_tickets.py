@@ -266,28 +266,37 @@ async def create_project_work_ticket(
             # Non-fatal: agent can still execute without envelope
 
         # ================================================================
-        # Step 5: Create Agent Work Request (Billing/Trial Tracking)
+        # Step 5: Create Work Request (Phase 2e: work_requests table)
         # ================================================================
-        request_payload = {
-            "project_id": project_id,
-            "agent_id": request.agent_id,
-            "task_description": request.task_description[:200],  # Truncate
-            "task_configuration": request.get_task_configuration(),  # Agent-specific config
+        # Note: Using new work_requests table (not legacy agent_work_requests)
+        # Matches workflow_reporting.py pattern for consistency
+        work_request_data = {
+            "workspace_id": workspace_id,
+            "basket_id": basket_id,
+            "agent_session_id": agent_session_id,  # Link to agent session
+            "requested_by_user_id": user_id,
+            "request_type": "project_work_session",
+            "task_intent": request.task_description,
+            "parameters": {
+                "task_configuration": request.get_task_configuration(),
+                "priority": request.priority,
+                "approval_strategy": request.approval_strategy.strategy,
+            },
+            "priority": request.priority,
         }
 
         try:
-            work_request_id = await record_work_request(
-                user_id=user_id,
-                workspace_id=workspace_id,
-                basket_id=basket_id,
-                agent_type=agent_type,
-                work_mode="enhanced",  # Mark as enhanced request
-                request_payload=request_payload,
-                permission_info=permission_info,
-            )
+            work_request_response = supabase.table("work_requests").insert(
+                work_request_data
+            ).execute()
+
+            if not work_request_response.data:
+                raise Exception("No work_request created")
+
+            work_request_id = work_request_response.data[0]["id"]
+
             logger.info(
-                f"[PROJECT WORK SESSION] Created work_request {work_request_id} "
-                f"(trial={not permission_info.get('is_subscribed')})"
+                f"[PROJECT WORK SESSION] Created work_request {work_request_id}"
             )
         except Exception as e:
             logger.error(f"[PROJECT WORK SESSION] Failed to create work_request: {e}")
@@ -299,20 +308,24 @@ async def create_project_work_ticket(
         # ================================================================
         # Step 6: Create Work Session (Execution Record)
         # ================================================================
+        # Note: work_tickets schema fields (Phase 2e):
+        # - work_request_id (FK to work_requests)
+        # - agent_session_id (FK to agent_sessions)
+        # - workspace_id, basket_id, agent_type (required)
+        # - status, metadata (JSONB for custom fields)
         session_data = {
-            "project_id": project_id,
-            "project_agent_id": request.agent_id,
-            "agent_work_request_id": work_request_id,
+            "work_request_id": work_request_id,
+            "agent_session_id": agent_session_id,  # From Step 2
             "basket_id": basket_id,
             "workspace_id": workspace_id,
-            "initiated_by_user_id": user_id,
-            "task_intent": request.task_description,
-            "task_type": agent_type,  # Store agent type as task_type
-            "status": "initialized",  # Start as initialized (pending deprecated)
-            "task_configuration": request.get_task_configuration(),  # Agent-specific config (JSONB)
-            "task_document_id": task_document_id,  # Link to context envelope P4 document
-            "approval_strategy": request.approval_strategy.strategy,  # Checkpoint strategy
+            "agent_type": agent_type,
+            "status": "pending",  # Start as pending (will be picked up by queue processor)
             "metadata": {
+                "project_id": project_id,  # Store in metadata since no direct FK
+                "task_intent": request.task_description,
+                "task_configuration": request.get_task_configuration(),
+                "task_document_id": task_document_id,
+                "approval_strategy": request.approval_strategy.strategy,
                 "priority": request.priority,
                 "source": "ui_enhanced",
                 "envelope_generated": task_document_id is not None,
