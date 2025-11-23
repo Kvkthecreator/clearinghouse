@@ -339,8 +339,8 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
         work_outputs = []
 
         try:
+            # NOTE: api_key comes from ANTHROPIC_API_KEY env var (SDK reads it automatically)
             async with ClaudeSDKClient(
-                api_key=self.api_key,
                 options=self._options
             ) as client:
                 # Connect (resume existing session or start new)
