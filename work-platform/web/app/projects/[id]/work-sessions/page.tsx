@@ -185,7 +185,7 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
       ) : (
         <div className="space-y-3">
           {sessions.map((session) => (
-            <Link key={session.session_id} href={`/projects/${projectId}/work-sessions/${session.session_id}`}>
+            <Link key={session.ticket_id} href={`/projects/${projectId}/work-sessions/${session.ticket_id}`}>
               <Card className="p-4 cursor-pointer transition hover:border-ring">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
