@@ -54,37 +54,55 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
 
   const projectAgents = projectAgentsData || [];
 
-  // Fetch work sessions via BFF
-  let sessions: any[] = [];
-  let statusCounts: Record<string, number> = {};
+  // Fetch work tickets with output counts
+  let tickets: any[] = [];
+  let statusCounts: Record<string, number> = { pending: 0, running: 0, completed: 0, failed: 0 };
   let totalCount = 0;
 
   try {
-    const url = new URL(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/projects/${projectId}/work-sessions/list`);
+    // Build query for work_tickets
+    let query = supabase
+      .from('work_tickets')
+      .select(`
+        id,
+        status,
+        agent_type,
+        created_at,
+        completed_at,
+        metadata,
+        work_outputs (
+          id,
+          title,
+          output_type
+        )
+      `)
+      .eq('basket_id', project.basket_id || '')
+      .order('created_at', { ascending: false });
+
     if (statusFilter) {
-      url.searchParams.set('status', statusFilter);
-    }
-    if (agentFilter) {
-      url.searchParams.set('agent_id', agentFilter);
+      query = query.eq('status', statusFilter);
     }
 
-    const response = await fetch(url.toString(), {
-      headers: {
-        Cookie: (await cookies()).toString(),
-      },
-      cache: 'no-store',
-    });
+    const { data: ticketsData } = await query;
+    tickets = ticketsData || [];
 
-    if (response.ok) {
-      const data = await response.json();
-      sessions = data.sessions || [];
-      statusCounts = data.status_counts || {};
-      totalCount = data.total_count || 0;
-    } else {
-      console.warn(`[Work Sessions] Failed to fetch sessions: ${response.status}`);
+    // Calculate status counts
+    const allTicketsQuery = supabase
+      .from('work_tickets')
+      .select('status')
+      .eq('basket_id', project.basket_id || '');
+
+    const { data: allTickets } = await allTicketsQuery;
+    if (allTickets) {
+      totalCount = allTickets.length;
+      allTickets.forEach((t: any) => {
+        if (statusCounts[t.status] !== undefined) {
+          statusCounts[t.status]++;
+        }
+      });
     }
   } catch (error) {
-    console.error(`[Work Sessions] Error fetching sessions:`, error);
+    console.error(`[Work Tickets] Error fetching tickets:`, error);
   }
 
   return (
@@ -96,10 +114,10 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back to Project
           </Link>
-          <h1 className="text-3xl font-bold text-foreground">Work Sessions</h1>
+          <h1 className="text-3xl font-bold text-foreground">Work Tickets</h1>
           <p className="text-muted-foreground mt-1">{project.name}</p>
         </div>
-        <Link href={`/projects/${projectId}/overview`}>
+        <Link href={`/projects/${projectId}/work-tickets/new`}>
           <Button>New Work Request</Button>
         </Link>
       </div>
@@ -165,48 +183,57 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
         />
       )}
 
-      {/* Sessions List */}
-      {sessions.length === 0 ? (
+      {/* Tickets List */}
+      {tickets.length === 0 ? (
         <Card className="p-12 text-center border-dashed">
           <h3 className="text-xl font-semibold text-foreground mb-2">
-            {statusFilter ? 'No sessions found' : 'No work sessions yet'}
+            {statusFilter ? 'No tickets found' : 'No work tickets yet'}
           </h3>
           <p className="text-muted-foreground mb-6 max-w-md mx-auto">
             {statusFilter
-              ? `No ${statusFilter} work sessions for this project.`
+              ? `No ${statusFilter} work tickets for this project.`
               : 'Create your first work request to get started.'}
           </p>
           {!statusFilter && (
-            <Link href={`/projects/${projectId}/overview`}>
+            <Link href={`/projects/${projectId}/work-tickets/new`}>
               <Button>Create Work Request</Button>
             </Link>
           )}
         </Card>
       ) : (
         <div className="space-y-3">
-          {sessions.map((session) => (
-            <Link key={session.ticket_id} href={`/projects/${projectId}/work-sessions/${session.ticket_id}`}>
-              <Card className="p-4 cursor-pointer transition hover:border-ring">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2 flex-wrap">
-                    <Badge variant={getStatusVariant(session.status)} className="capitalize">
-                      {session.status}
-                    </Badge>
-                    <Badge variant="outline" className="text-xs capitalize">
-                      {session.agent_type}
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">{session.agent_display_name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(session.created_at).toLocaleString()}
-                      </span>
+          {tickets.map((ticket) => {
+            const outputCount = Array.isArray(ticket.work_outputs) ? ticket.work_outputs.length : 0;
+            const taskDesc = ticket.metadata?.task_description || ticket.metadata?.recipe_slug || 'Work Ticket';
+
+            return (
+              <Link key={ticket.id} href={`/projects/${projectId}/outputs`}>
+                <Card className="p-4 cursor-pointer transition hover:border-ring">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <Badge variant={getStatusVariant(ticket.status)} className="capitalize">
+                          {ticket.status}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs capitalize">
+                          {ticket.agent_type}
+                        </Badge>
+                        {outputCount > 0 && (
+                          <Badge variant="secondary" className="text-xs">
+                            {outputCount} {outputCount === 1 ? 'output' : 'outputs'}
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(ticket.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-foreground font-medium">{taskDesc}</p>
                     </div>
-                    <p className="text-foreground font-medium">{session.task_description}</p>
                   </div>
-                </div>
-              </Card>
-            </Link>
-          ))}
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
