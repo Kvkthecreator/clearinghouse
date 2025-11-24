@@ -182,7 +182,7 @@ export default function RecipeConfigureClient({
                   />
                 )}
 
-                {param.type === "number" && (
+                {(param.type === "number" || param.type === "range") && (
                   <Input
                     id={key}
                     type="number"

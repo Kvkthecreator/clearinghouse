@@ -65,6 +65,23 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
   const recipeParams = recipeData.configurable_parameters || {};
   const outputFormat = recipeParams.output_format?.default || 'pptx';
 
+  // Transform parameters to add missing fields (label, required)
+  const transformedParams: Record<string, any> = {};
+  Object.entries(recipeParams).forEach(([key, param]: [string, any]) => {
+    if (key === 'output_format') return; // Skip output_format, it's metadata
+
+    transformedParams[key] = {
+      type: param.type || 'text',
+      label: param.description || key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+      required: !param.optional,
+      placeholder: param.description,
+      default: param.default,
+      min: param.min,
+      max: param.max,
+      options: param.options,
+    };
+  });
+
   const recipe = {
     id: recipeData.slug,
     db_id: recipeData.id,
@@ -72,7 +89,7 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     description: recipeData.description || `${recipeData.name} recipe`,
     agent_type: recipeData.agent_type,
     output_format: outputFormat,
-    parameters: recipeParams,
+    parameters: transformedParams,
   };
 
   return (
