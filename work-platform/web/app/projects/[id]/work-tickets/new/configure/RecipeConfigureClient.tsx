@@ -19,7 +19,7 @@ interface RecipeParameter {
   default?: any;
   min?: number;
   max?: number;
-  options?: string[];
+  options?: readonly string[];
 }
 
 interface Recipe {
