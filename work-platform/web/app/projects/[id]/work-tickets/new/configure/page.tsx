@@ -62,8 +62,8 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
   }
 
   // Transform database recipe to frontend format
-  const params = recipeData.configurable_parameters || {};
-  const outputFormat = params.output_format?.default || 'pptx';
+  const recipeParams = recipeData.configurable_parameters || {};
+  const outputFormat = recipeParams.output_format?.default || 'pptx';
 
   const recipe = {
     id: recipeData.slug,
@@ -72,7 +72,7 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     description: recipeData.description || `${recipeData.name} recipe`,
     agent_type: recipeData.agent_type,
     output_format: outputFormat,
-    parameters: params,
+    parameters: recipeParams,
   };
 
   return (
