@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Layers, Briefcase, Settings } from 'lucide-react';
+import { LayoutDashboard, Layers, Briefcase, Settings, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ProjectNavigationProps {
@@ -11,9 +11,14 @@ interface ProjectNavigationProps {
 
 const tabs = [
   {
-    name: 'Chat',
-    href: '',  // Root project page is now TP chat
+    name: 'Overview',
+    href: '/overview',
     icon: LayoutDashboard,
+  },
+  {
+    name: 'Chat',
+    href: '',  // Root project page is TP chat
+    icon: MessageSquare,
   },
   {
     name: 'Context',
@@ -21,8 +26,8 @@ const tabs = [
     icon: Layers,
   },
   {
-    name: 'Work Sessions',
-    href: '/work-sessions',
+    name: 'Work Tickets',
+    href: '/work-tickets',
     icon: Briefcase,
   },
   {

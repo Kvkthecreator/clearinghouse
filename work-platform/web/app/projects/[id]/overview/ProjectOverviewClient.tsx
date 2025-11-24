@@ -78,9 +78,18 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
               <span>Updated {new Date(project.updated_at).toLocaleDateString()}</span>
             </div>
           </div>
-          <Badge variant="secondary" className="text-xs capitalize">
-            {project.status}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="text-xs capitalize">
+              {project.status}
+            </Badge>
+            <Button
+              onClick={() => router.push(`/projects/${project.id}/work-tickets/new`)}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Create Work Ticket
+            </Button>
+          </div>
         </div>
 
       </div>
@@ -138,32 +147,17 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex flex-col gap-2">
-                    {/* Create Work Ticket Button */}
-                    {agent.is_active && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="w-full gap-2"
-                        onClick={() => router.push(`/projects/${project.id}/work-tickets/new`)}
-                      >
-                        <Plus className="h-4 w-4" />
-                        Create Work Ticket
-                      </Button>
-                    )}
-
-                    {/* View Work Tickets Button */}
-                    {(stats?.pending || stats?.running || stats?.lastRun) && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full text-xs"
-                        onClick={() => router.push(`/projects/${project.id}/work-tickets?agent=${agent.id}`)}
-                      >
-                        View Work Tickets
-                      </Button>
-                    )}
-                  </div>
+                  {/* View Work Tickets Button */}
+                  {(stats?.pending || stats?.running || stats?.lastRun) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-xs"
+                      onClick={() => router.push(`/projects/${project.id}/work-tickets?agent=${agent.id}`)}
+                    >
+                      View Work Tickets
+                    </Button>
+                  )}
                 </div>
               );
             })}
