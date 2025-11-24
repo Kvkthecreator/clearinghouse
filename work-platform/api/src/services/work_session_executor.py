@@ -165,14 +165,81 @@ class WorkTicketExecutor:
                 )
 
             # ================================================================
-            # Step 6: Execute agent task
+            # Step 6: Execute agent task (call agent-specific methods)
             # ================================================================
-            status, outputs, checkpoint_reason = await self.agent_client.execute_task(
-                agent=agent,
-                task_description=session["task_intent"],
-                task_configuration=session.get("task_configuration", {}),
-                context_envelope=context_envelope
+            agent_type = session["task_type"]
+            task_description = session["task_intent"]
+            task_config = session.get("task_configuration", {})
+
+            logger.info(
+                f"[WORK SESSION EXECUTOR] Executing {agent_type} agent with task: "
+                f"{task_description[:100]}..."
             )
+
+            try:
+                # Call agent-specific execution method
+                if agent_type == "research":
+                    # ResearchAgentSDK.deep_dive(topic, claude_session_id)
+                    result = await agent.deep_dive(
+                        topic=task_description,
+                        claude_session_id=agent_session.claude_session_id,
+                    )
+                    # Parse work_outputs from result
+                    outputs = result.get("work_outputs", [])
+                    status = "completed"
+                    checkpoint_reason = None
+
+                elif agent_type == "content":
+                    # ContentAgentSDK.create(brief, platform, tone, claude_session_id)
+                    result = await agent.create(
+                        brief=task_description,
+                        platform=task_config.get("platform", "general"),
+                        tone=task_config.get("tone", "professional"),
+                        claude_session_id=agent_session.claude_session_id,
+                    )
+                    outputs = result.get("work_outputs", [])
+                    status = "completed"
+                    checkpoint_reason = None
+
+                elif agent_type == "reporting":
+                    # ReportingAgentSDK.generate(report_type, format, topic, claude_session_id)
+                    # Or execute_recipe(recipe, parameters, claude_session_id)
+                    recipe = task_config.get("recipe")
+
+                    if recipe:
+                        # Use recipe-based execution
+                        result = await agent.execute_recipe(
+                            recipe=recipe,
+                            parameters=task_config.get("recipe_parameters", {}),
+                            claude_session_id=agent_session.claude_session_id,
+                        )
+                    else:
+                        # Use generate method
+                        result = await agent.generate(
+                            report_type=task_config.get("report_type", "general"),
+                            format=task_config.get("format", "pdf"),
+                            topic=task_description,
+                            claude_session_id=agent_session.claude_session_id,
+                        )
+
+                    outputs = result.get("work_outputs", [])
+                    status = "completed"
+                    checkpoint_reason = None
+
+                else:
+                    raise WorkTicketExecutionError(
+                        f"Unknown agent type: {agent_type}. "
+                        f"Supported: research, content, reporting"
+                    )
+
+            except Exception as agent_error:
+                logger.error(
+                    f"[WORK SESSION EXECUTOR] Agent execution failed: {agent_error}",
+                    exc_info=True
+                )
+                status = "failed"
+                outputs = []
+                checkpoint_reason = f"Agent execution error: {str(agent_error)}"
 
             # ================================================================
             # Step 6: Handle execution result
