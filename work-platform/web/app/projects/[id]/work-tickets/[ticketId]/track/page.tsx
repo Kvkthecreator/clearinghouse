@@ -20,6 +20,8 @@ interface PageProps {
 export default async function TicketTrackingPage({ params }: PageProps) {
   const { id: projectId, ticketId } = await params;
 
+  console.log('[TicketTrackingPage] Loading ticket:', { projectId, ticketId });
+
   // Use anon client for public ticket viewing (RLS handles security)
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,7 +29,7 @@ export default async function TicketTrackingPage({ params }: PageProps) {
   );
 
   // Fetch work ticket with outputs
-  const { data: ticket } = await supabase
+  const { data: ticket, error: ticketError } = await supabase
     .from('work_tickets')
     .select(`
       id,
@@ -55,18 +57,24 @@ export default async function TicketTrackingPage({ params }: PageProps) {
     .eq('id', ticketId)
     .maybeSingle();
 
+  console.log('[TicketTrackingPage] Ticket query result:', { ticket, ticketError });
+
   if (!ticket) {
+    console.error('[TicketTrackingPage] Ticket not found:', ticketId);
     notFound();
   }
 
   // Fetch project from ticket's basket
-  const { data: project } = await supabase
+  const { data: project, error: projectError } = await supabase
     .from('projects')
     .select('id, name, basket_id')
     .eq('basket_id', ticket.basket_id)
     .maybeSingle();
 
+  console.log('[TicketTrackingPage] Project query result:', { project, projectError });
+
   if (!project) {
+    console.error('[TicketTrackingPage] Project not found for basket:', ticket.basket_id);
     notFound();
   }
 
@@ -74,6 +82,8 @@ export default async function TicketTrackingPage({ params }: PageProps) {
   const recipeName = ticket.metadata?.recipe_slug || 'Work Request';
   const recipeParams = ticket.metadata?.recipe_parameters || {};
   const taskDescription = ticket.metadata?.task_description || '';
+
+  console.log('[TicketTrackingPage] Rendering TicketTrackingClient');
 
   return (
     <TicketTrackingClient
