@@ -373,7 +373,7 @@ class ContentAgentSDK:
 - Memory: Available (SubstrateMemoryAdapter)
 - Enabled Platforms: {", ".join(self.enabled_platforms)}
 - Brand Voice Mode: {self.brand_voice_mode}
-- Session ID: {self.current_session.id}
+- Session ID: {self.current_session.id if self.current_session else 'standalone-mode'}
 """
 
         # Inject knowledge modules if provided
