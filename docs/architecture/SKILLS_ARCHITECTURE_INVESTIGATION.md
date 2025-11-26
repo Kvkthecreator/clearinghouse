@@ -6,6 +6,13 @@
 
 ---
 
+URLS to check in future:
+https://platform.claude.com/docs/en/agent-sdk/skills
+https://code.claude.com/docs/en/skills
+https://github.com/anthropics/claude-cookbooks/tree/main/skills
+https://claude.com/blog/how-to-create-skills-key-steps-limitations-and-examples
+
+
 ## Executive Summary
 
 **CONFIRMED**: The Claude Agent SDK (v0.1.8) does NOT have built-in access to Anthropic's pre-built document skills (pptx, pdf, xlsx, docx). These skills are only available via:
