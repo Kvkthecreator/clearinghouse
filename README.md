@@ -6,7 +6,7 @@ We integrate what others separate: context management + agent work orchestration
 
 ### What Makes YARNNN Different
 
-- **Single Approval**: Review work quality once → context automatically updated
+- **Separated Governance**: Work supervision (quality) + substrate governance (integrity) = clear boundaries
 - **Context-Powered Reasoning**: Agents access deep substrate, not just retrieval
 - **Multi-Checkpoint Supervision**: Iterative feedback beats binary approve/reject
 - **Complete Provenance**: Every substrate change traces to work session and reasoning
@@ -15,16 +15,18 @@ We integrate what others separate: context management + agent work orchestration
 
 ---
 
-## Architecture (v4.0 - Four-Layer Model)
+## Architecture (v4.1 - Two-Layer with BFF Pattern)
 
-YARNNN is built on a layered architecture where each layer has clear responsibilities:
+YARNNN is built on a two-layer architecture with separated governance:
 
 | Layer | Responsibility | Key Components |
 |-------|---------------|----------------|
-| **Layer 4: Presentation** | Work review UI, substrate management | Next.js (Vercel) |
-| **Layer 3: Unified Governance** | Work quality + substrate integrity approval | Python orchestrator |
-| **Layer 2: Work Orchestration** | Agent sessions, artifacts, checkpoints | PostgreSQL + FastAPI |
-| **Layer 1: Substrate Core** | Blocks, documents, timeline, semantic layer | Supabase + FastAPI |
+| **Layer 2: Work Orchestration** | Agent sessions, work supervision, tickets | PostgreSQL + FastAPI (work-platform) |
+| **Layer 1: Substrate Core** | Blocks, documents, semantic layer, substrate governance | PostgreSQL + FastAPI (substrate-API) |
+
+**Governance Separation**:
+- **Work Supervision** (Layer 2): Reviews work output quality (work-platform)
+- **Substrate Governance** (Layer 1): P1 proposals pipeline with semantic dedup (substrate-API)
 
 ### Technology Stack
 
@@ -82,7 +84,7 @@ Core philosophy and architectural decisions are governed by canon documents:
 ### Philosophy
 - **[Platform Canon v4.0](docs/canon/YARNNN_PLATFORM_CANON_V4.md)** - Core identity and principles
 - **[Work Platform Thesis](docs/canon/YARNNN_WORK_PLATFORM_THESIS.md)** - Why context + work integration matters
-- **[Governance Philosophy v4.0](docs/canon/YARNNN_GOVERNANCE_PHILOSOPHY_V4.md)** - Unified governance model
+- **[Governance Philosophy v4.0](docs/canon/YARNNN_GOVERNANCE_PHILOSOPHY_V4.md)** - ⚠️ Vision document (implementation uses separated governance)
 
 ### Architecture
 - **[Work Orchestration Layer](docs/WORK_ORCHESTRATION_LAYER.md)** - Layer 2 specification

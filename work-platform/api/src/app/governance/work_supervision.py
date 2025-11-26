@@ -1,21 +1,22 @@
-"""Unified approval orchestrator for work sessions.
+"""Work supervision orchestrator for work sessions.
 
-⚠️ STATUS: PARTIAL IMPLEMENTATION - SUBSTRATE INTEGRATION NOT YET DEFINED
+⚠️ ARCHITECTURE NOTE: SEPARATED GOVERNANCE (Not Unified)
 
-This module was designed for Layer 3: Unified Governance, but the substrate
-integration approach is not yet implemented.
+YARNNN uses SEPARATED governance architecture (as of 2025-11-19):
+- **Work Supervision** (this module): Reviews work_outputs quality in work-platform
+- **Substrate Governance**: Independent P1 proposals pipeline in substrate-API
 
 CURRENT STATE:
-- ✅ Work quality assessment (review work sessions)
-- ❌ Substrate mutation (DISABLED - conflicts with substrate governance)
+- ✅ Work quality assessment (review work sessions and outputs)
+- ❌ Substrate mutation (INTENTIONALLY DISABLED - substrate has its own governance)
 
-TODO (Future):
-- Design proper work-platform → substrate-api integration
-- Should approved outputs create substrate proposals?
-- Should work governance be independent from substrate governance?
-- What's the right bridge architecture?
+FUTURE BRIDGE (Deferred):
+- Approved work_outputs MAY feed into substrate proposals (not automatic)
+- See: docs/canon/YARNNN_PLATFORM_CANON_V4.md - Section on Separated Governance
+- See: docs/archive/legacy-unified-governance/README.md - Why unified approach was deprecated
 
-See: docs/architecture/GOVERNANCE_SEPARATION_REFACTOR_PLAN.md
+This module provides work supervision only. Substrate changes go through substrate-API's
+P1 governance pipeline (semantic dedup, quality validation, proposals).
 """
 
 from datetime import datetime
@@ -69,13 +70,21 @@ class WorkReviewResult(BaseModel):
 
 class UnifiedApprovalOrchestrator:
     """
-    Orchestrates unified approval for work sessions.
+    Orchestrates work supervision for work sessions.
 
-    Single user review handles both:
-    1. Work quality assessment
-    2. Substrate mutation application
+    ⚠️ LEGACY NAME: "UnifiedApprovalOrchestrator" is kept for backward compatibility,
+    but this is now WORK SUPERVISION only (not unified governance).
 
-    This removes the need for double-approval (work + substrate).
+    CURRENT RESPONSIBILITIES:
+    1. Work quality assessment (approve/reject work outputs)
+    2. Output status management (approved, rejected, pending_review)
+
+    INTENTIONALLY EXCLUDED:
+    - Substrate mutations (handled by substrate-API's P1 governance)
+    - Block creation (must go through proposals)
+    - Document creation (architecture TBD)
+
+    See docs/canon/YARNNN_PLATFORM_CANON_V4.md for separated governance architecture.
     """
 
     def __init__(self, db: Client):
