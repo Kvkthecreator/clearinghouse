@@ -87,6 +87,7 @@ async def check_agent_configuration():
         mock_session = MagicMock(spec=AgentSession)
         mock_session.id = "test-session-123"
         mock_session.claude_session_id = None
+        mock_session.parent_session_id = None
 
         agent = ReportingAgentSDK(
             basket_id="test-basket",
