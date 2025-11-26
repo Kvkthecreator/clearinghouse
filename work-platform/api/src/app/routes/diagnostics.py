@@ -594,7 +594,7 @@ async def test_emit_work_output():
     This will confirm:
     1. SDK accepts emit_work_output in allowed_tools
     2. Agent successfully invokes the tool
-    3. Tool creates work_outputs in database
+    3. MCP server is properly configured
 
     Returns:
         - tool_calls: List of tools invoked (should include emit_work_output)
@@ -602,10 +602,20 @@ async def test_emit_work_output():
         - response_text: Agent's text response
     """
     from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+    from agents_sdk.shared_tools_mcp import create_shared_tools_server
 
     print("[EMIT TEST] Starting...", flush=True)
 
     try:
+        # Create MCP server with test context
+        print("[EMIT TEST] Creating MCP server...", flush=True)
+        shared_tools_server = create_shared_tools_server(
+            basket_id="test-basket-123",
+            work_ticket_id="test-ticket-456",
+            agent_type="reporting",
+            user_jwt=None
+        )
+
         options = ClaudeAgentOptions(
             model="claude-sonnet-4-5",
             system_prompt="""You are a report writer. When you finish writing content, you MUST use the emit_work_output tool to save it.
@@ -613,17 +623,19 @@ async def test_emit_work_output():
 **CRITICAL**: After writing content, use emit_work_output to save your work.
 
 Required parameters:
-- output_type: "report_draft", "outline", "analysis", etc.
+- output_type: "finding", "recommendation", "insight", "draft_content", or "analysis"
 - title: Clear title for the output
-- body: The actual content (markdown format)
-- generation_method: "text" (for text-based outputs)
+- body: Dictionary with at least "summary" key
+- confidence: Number between 0 and 1
+- source_block_ids: List of source IDs (can be empty list)
 
 Example:
 User: "Write a brief summary about AI"
 You: [Write the summary, then use emit_work_output tool to save it]
 
 DO NOT just write content - you MUST also save it using emit_work_output.""",
-            allowed_tools=["emit_work_output"],
+            mcp_servers={"shared_tools": shared_tools_server},
+            allowed_tools=["mcp__shared_tools__emit_work_output"],
         )
 
         tool_calls = []
@@ -661,7 +673,8 @@ DO NOT just write content - you MUST also save it using emit_work_output.""",
 
                             print(f"[EMIT TEST] Tool invoked: {tool_name}", flush=True)
 
-                            if tool_name == "emit_work_output":
+                            # Check for both prefixed and unprefixed names
+                            if tool_name in ["emit_work_output", "mcp__shared_tools__emit_work_output"]:
                                 emit_invoked = True
                                 print(f"[EMIT TEST] ✅ emit_work_output invoked", flush=True)
                                 print(f"[EMIT TEST] Output type: {tool_input.get('output_type')}", flush=True)
