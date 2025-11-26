@@ -130,6 +130,7 @@ app.add_middleware(
         "/api/diagnostics/test-todowrite",  # TodoWrite test - Phase 2 core hardening (no auth)
         "/api/diagnostics/test-emit-work-output",  # emit_work_output test - Phase 3 core hardening (no auth)
         "/api/diagnostics/test-research-workflow",  # Research workflow test - Phase 4 multi-step validation (no auth)
+        "/api/diagnostics/test-inter-agent-flow",  # Inter-agent flow test - Phase 5 substrate-mediated orchestration (no auth)
     },
     exempt_prefixes={
         "/health",

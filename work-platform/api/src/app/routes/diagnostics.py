@@ -835,3 +835,235 @@ Output structure:
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+@router.post("/test-inter-agent-flow")
+async def test_inter_agent_flow():
+    """
+    Phase 5: Inter-Agent Data Flow via Substrate
+
+    Tests the complete agent orchestration pattern:
+    1. Research Agent → work_outputs saved to substrate
+    2. Load work_outputs from database
+    3. Content Agent receives them via WorkBundle
+    4. Content Agent delegates to sub-agents (Twitter, LinkedIn)
+    5. Sub-agents generate platform-specific content
+    6. Content Agent emits structured outputs
+
+    Validates:
+    - Work outputs persist correctly to database
+    - WorkBundle successfully loads substrate context
+    - Content agent receives and processes research findings
+    - Sub-agent delegation works (Twitter/LinkedIn specialists)
+    - emit_work_output from content agent
+    """
+    print("\n" + "=" * 80, flush=True)
+    print("[INTER-AGENT TEST] Starting Phase 5: Inter-Agent Data Flow", flush=True)
+    print("=" * 80 + "\n", flush=True)
+
+    try:
+        from agents_sdk.content_agent_sdk import ContentAgentSDK
+        from agents_sdk.work_bundle import WorkBundle
+        from claude_agent_sdk import ClaudeSDKClient
+        from config.supabase_client import get_supabase_client
+
+        # Step 1: Query database for research outputs from previous test
+        print("[STEP 1] Querying database for research work_outputs...", flush=True)
+
+        supabase = get_supabase_client()
+
+        # Query work_outputs from test-basket-research (created by research workflow test)
+        result = supabase.table("work_outputs") \
+            .select("id, title, output_type, body, confidence, created_at, work_ticket_id") \
+            .eq("basket_id", "test-basket-research") \
+            .order("created_at", desc=True) \
+            .limit(5) \
+            .execute()
+
+        work_outputs = result.data
+
+        print(f"[STEP 1] ✅ Found {len(work_outputs)} research outputs", flush=True)
+        for idx, output in enumerate(work_outputs):
+            print(f"  [{idx+1}] {output['title'][:60]}... (type={output['output_type']})", flush=True)
+
+        if not work_outputs:
+            return {
+                "status": "error",
+                "error": "No research outputs found. Run /api/diagnostics/test-research-workflow first.",
+                "basket_id": "test-basket-research"
+            }
+
+        # Step 2: Create WorkBundle with research findings as substrate blocks
+        print("\n[STEP 2] Creating WorkBundle with research findings as substrate context...", flush=True)
+
+        # Transform work_outputs into substrate_blocks format
+        substrate_blocks = []
+        for output in work_outputs:
+            # Convert work_output to substrate block format
+            block = {
+                "id": output["id"],
+                "title": output["title"],
+                "output_type": output["output_type"],
+                "content": output["body"],
+                "confidence": output["confidence"],
+                "created_at": output["created_at"],
+                "source": "research_agent"
+            }
+            substrate_blocks.append(block)
+
+        bundle = WorkBundle(
+            work_request_id="test-request-inter-agent",
+            work_ticket_id="test-ticket-content",
+            basket_id="test-basket-content",
+            workspace_id="test-workspace",
+            user_id="test-user",
+            task="Create Twitter and LinkedIn posts from research findings on Claude Agent SDK and AI development trends",
+            agent_type="content",
+            priority="medium",
+            substrate_blocks=substrate_blocks,
+            reference_assets=[],
+            agent_config={},
+            user_requirements={}
+        )
+
+        print(f"[STEP 2] ✅ WorkBundle created:", flush=True)
+        print(f"  - Substrate blocks: {len(bundle.substrate_blocks)}", flush=True)
+        print(f"  - Task: {bundle.task[:60]}...", flush=True)
+
+        # Step 3: Initialize Content Agent with WorkBundle
+        print("\n[STEP 3] Initializing Content Agent with WorkBundle...", flush=True)
+
+        agent = ContentAgentSDK(
+            basket_id=bundle.basket_id,
+            workspace_id=bundle.workspace_id,
+            work_ticket_id=bundle.work_ticket_id,
+            enabled_platforms=["twitter", "linkedin"],  # Enable Twitter and LinkedIn specialists
+            bundle=bundle  # Pass pre-loaded substrate context
+        )
+
+        print(f"[STEP 3] ✅ ContentAgentSDK initialized with bundle", flush=True)
+
+        # Step 4: Execute content creation workflow
+        print("\n[STEP 4] Executing content creation workflow...", flush=True)
+
+        query = f"""Based on the research findings provided in the substrate context, create engaging social media content for two platforms:
+
+1. TWITTER POST: Create a concise, engaging Twitter thread (3-4 tweets) about Claude Agent SDK and AI development trends
+   - Use the Twitter specialist sub-agent
+   - Follow platform best practices (280 chars per tweet, hooks, engagement)
+   - Use emit_work_output with output_type="content_draft"
+
+2. LINKEDIN POST: Create a professional LinkedIn post about the same topic
+   - Use the LinkedIn specialist sub-agent
+   - Professional thought leadership tone
+   - Include insights from the research findings
+   - Use emit_work_output with output_type="content_draft"
+
+IMPORTANT: You MUST delegate to your platform specialist sub-agents (Twitter and LinkedIn specialists).
+Review the substrate context first to understand the research findings, then create platform-optimized content.
+
+Each piece of content should be emitted as a separate work_output."""
+
+        # Track execution
+        tool_calls = []
+        response_text = ""
+        twitter_content_created = False
+        linkedin_content_created = False
+        subagent_used = False
+        emit_count = 0
+
+        async with ClaudeSDKClient(options=agent._options) as client:
+            await client.connect()
+            print(f"[STEP 4] Query sent to Content Agent...", flush=True)
+            await client.query(query)
+
+            print(f"[STEP 4] Receiving response from Content Agent...", flush=True)
+            async for message in client.receive_response():
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    for block in message.content:
+                        # Extract text
+                        if hasattr(block, 'text'):
+                            response_text += block.text
+
+                        # Detect tool calls
+                        if hasattr(block, 'name'):
+                            tool_name = block.name
+                            tool_input = block.input if hasattr(block, 'input') else {}
+
+                            tool_calls.append({
+                                "tool": tool_name,
+                                "input": str(tool_input)[:300]
+                            })
+
+                            print(f"[STEP 4] 🔧 Tool invoked: {tool_name}", flush=True)
+
+                            # Track specific patterns
+                            if "specialist" in tool_name.lower() or "subagent" in tool_name.lower():
+                                subagent_used = True
+                                print(f"[STEP 4]   → Sub-agent delegation detected!", flush=True)
+
+                            if tool_name == "mcp__shared_tools__emit_work_output":
+                                emit_count += 1
+                                # Check output metadata
+                                if isinstance(tool_input, dict):
+                                    metadata = tool_input.get("metadata", {})
+                                    platform = metadata.get("platform", "unknown")
+                                    if platform == "twitter":
+                                        twitter_content_created = True
+                                    elif platform == "linkedin":
+                                        linkedin_content_created = True
+                                    print(f"[STEP 4]   → Content emitted for platform: {platform}", flush=True)
+
+        # Step 5: Validation
+        print("\n[STEP 5] Validation Results:", flush=True)
+        print(f"  ✅ Research outputs loaded: {len(work_outputs)}", flush=True)
+        print(f"  ✅ WorkBundle created with substrate blocks: {len(substrate_blocks)}", flush=True)
+        print(f"  ✅ Content Agent initialized with bundle", flush=True)
+        print(f"  ✅ Tool calls made: {len(tool_calls)}", flush=True)
+        print(f"  {'✅' if emit_count > 0 else '❌'} emit_work_output called: {emit_count} times", flush=True)
+        print(f"  {'✅' if subagent_used else '⚠️'} Sub-agent delegation: {subagent_used}", flush=True)
+        print(f"  {'✅' if twitter_content_created else '⚠️'} Twitter content created: {twitter_content_created}", flush=True)
+        print(f"  {'✅' if linkedin_content_created else '⚠️'} LinkedIn content created: {linkedin_content_created}", flush=True)
+        print(f"  Response length: {len(response_text)} chars", flush=True)
+
+        success = (
+            len(work_outputs) > 0 and
+            len(substrate_blocks) > 0 and
+            emit_count > 0
+        )
+
+        print(f"\n[STEP 5] {'✅ INTER-AGENT TEST PASSED' if success else '⚠️ PARTIAL SUCCESS'}", flush=True)
+        print("=" * 80 + "\n", flush=True)
+
+        return {
+            "status": "success" if success else "partial",
+            "validation": {
+                "research_outputs_loaded": len(work_outputs),
+                "substrate_blocks_created": len(substrate_blocks),
+                "tool_calls": len(tool_calls),
+                "emit_work_output_count": emit_count,
+                "subagent_delegation": subagent_used,
+                "twitter_content": twitter_content_created,
+                "linkedin_content": linkedin_content_created
+            },
+            "research_outputs_sample": [
+                {
+                    "title": output["title"],
+                    "type": output["output_type"],
+                    "confidence": output["confidence"]
+                }
+                for output in work_outputs[:3]
+            ],
+            "tool_calls": tool_calls,
+            "response_length": len(response_text),
+            "response_preview": response_text[:500]
+        }
+
+    except Exception as e:
+        print(f"[INTER-AGENT TEST] ❌ FAILED: {e}", flush=True)
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
