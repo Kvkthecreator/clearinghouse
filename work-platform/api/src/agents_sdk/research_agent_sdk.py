@@ -34,6 +34,8 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from adapters.memory_adapter import SubstrateMemoryAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
+from agents_sdk.orchestration_patterns import build_agent_system_prompt
+from agents_sdk.work_bundle import WorkBundle
 from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,12 @@ Keep users informed about their markets, competitors, and topics of interest thr
 - Signal detection (what's important?)
 - Insight synthesis (so what?)
 
+**How You Access Context (On-Demand Substrate Queries)**:
+- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- Query substrate on-demand for relevant context: prior research, related findings, competitor data
+- The agent orchestrator provides memory adapter - you query what you need when you need it
+- This is more efficient than pre-loading all context (lazy loading, token savings)
+
 **CRITICAL: Structured Output Requirements**
 
 You have access to the emit_work_output tool. You MUST use this tool to record all your findings.
@@ -66,7 +74,7 @@ Each output you emit will be reviewed by the user before any action is taken.
 The user maintains full control through this supervision workflow.
 
 **Research Approach:**
-1. Query existing knowledge first (avoid redundant research)
+1. Query existing knowledge via memory.query() (avoid redundant research)
 2. Identify knowledge gaps
 3. Conduct targeted research using WebSearch tool
 4. For each finding: Call emit_work_output with structured data
@@ -110,13 +118,17 @@ class ResearchAgentSDK:
         anthropic_api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
         monitoring_domains: Optional[List[str]] = None,
-        knowledge_modules: str = "",
         session: Optional[AgentSession] = None,
-        bundle: Optional[Any] = None,  # NEW: Pre-loaded context bundle from TP staging
-        memory: Optional[SubstrateMemoryAdapter] = None,  # DEPRECATED: For backward compatibility
+        memory: Optional[SubstrateMemoryAdapter] = None,
+        bundle: Optional[WorkBundle] = None,
     ):
         """
-        Initialize ResearchAgentSDK.
+        Initialize ResearchAgentSDK with persistent session + substrate access.
+
+        Architecture:
+        - session: Agent SDK conversation history (SDK layer persistence)
+        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
             basket_id: Basket ID for substrate queries
@@ -125,15 +137,13 @@ class ResearchAgentSDK:
             anthropic_api_key: Anthropic API key (from env if None)
             model: Claude model to use
             monitoring_domains: Domains to monitor (for scheduled runs - Phase 2b)
-            knowledge_modules: Knowledge modules (procedural knowledge) loaded from orchestration layer
-            session: Optional AgentSession from TP (hierarchical session management)
-            bundle: Optional WorkBundle from TP staging (pre-loaded substrate + assets)
-            memory: DEPRECATED - Use bundle instead (kept for backward compatibility)
+            session: AgentSession (persistent conversation history - SDK layer)
+            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
         self.workspace_id = workspace_id
         self.work_ticket_id = work_ticket_id
-        self.knowledge_modules = knowledge_modules
         self.monitoring_domains = monitoring_domains or ["general"]
 
         # Get API key
@@ -145,33 +155,30 @@ class ResearchAgentSDK:
         self.api_key = anthropic_api_key
         self.model = model
 
-        # NEW PATTERN: Use pre-loaded bundle from TP staging
-        if bundle:
-            self.bundle = bundle
-            logger.info(
-                f"Using WorkBundle from TP staging: {len(bundle.substrate_blocks)} blocks, "
-                f"{len(bundle.reference_assets)} assets"
-            )
-            self.memory = None  # No memory adapter needed - bundle has pre-loaded context
-        elif memory:
-            # LEGACY PATTERN: For backward compatibility (will be removed)
-            self.bundle = None
-            self.memory = memory
-            logger.info(f"LEGACY: Using memory adapter from TP for basket={basket_id}")
+        # YARNNN substrate access (on-demand queries)
+        self.memory = memory
+        if memory:
+            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
         else:
-            # Standalone mode: No pre-loaded context (testing only)
-            self.bundle = None
-            self.memory = None
-            logger.info("Standalone mode: No pre-loaded context (testing mode)")
+            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
 
-        # Use provided session from TP, or will create in async init
+        # Work ticket metadata + asset references (NOT substrate blocks)
+        self.bundle = bundle
+        if bundle:
+            logger.info(
+                f"Using WorkBundle: task='{bundle.task[:50]}...', "
+                f"reference_assets={len(bundle.reference_assets) if hasattr(bundle, 'reference_assets') else 0}"
+            )
+
+        # Agent SDK session (conversation history)
+        self.session = session
         if session:
-            self.current_session = session
-            logger.info(f"Using session from TP: {session.id} (parent={session.parent_session_id})")
+            logger.info(
+                f"Using persistent session: {session.id} "
+                f"(parent={session.parent_session_id}, sdk_session_id={session.sdk_session_id})"
+            )
         else:
-            # Standalone mode: session will be created by async get_or_create in methods
-            self.current_session = None
-            logger.info("Standalone mode: session will be created on first method call")
+            logger.warning("No session provided - will create ephemeral session (not recommended for production)")
 
         # Create MCP server for emit_work_output tool with context baked in
         shared_tools = create_shared_tools_server(
@@ -180,17 +187,15 @@ class ResearchAgentSDK:
             agent_type="research"
         )
 
-        # Build Claude SDK options with MCP server
-        # NOTE: Official SDK v0.1.8+ does NOT have 'tools' parameter
-        # Must use mcp_servers + allowed_tools pattern
-        # Note: max_tokens is controlled at ClaudeSDKClient.chat() level, not here
+        # Build Claude SDK options with STATIC system prompt (cacheable!)
         self._options = ClaudeAgentOptions(
             model=self.model,
-            system_prompt=self._build_system_prompt(),
+            system_prompt=self._build_static_system_prompt(),  # Static prompt (no bundle context)
             mcp_servers={"shared_tools": shared_tools},
             allowed_tools=[
                 "mcp__shared_tools__emit_work_output",  # Custom tool for structured outputs
-                "WebSearch"  # Built-in web search (capitalized)
+                "WebSearch",  # Built-in web search (capitalized)
+                "TodoWrite",  # For progress tracking
             ],
         )
 
@@ -199,56 +204,59 @@ class ResearchAgentSDK:
             f"ticket={work_ticket_id}, domains={self.monitoring_domains}"
         )
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with knowledge modules and bundle context."""
-        prompt = RESEARCH_AGENT_SYSTEM_PROMPT
+    def _build_static_system_prompt(self) -> str:
+        """
+        Build STATIC system prompt (cacheable by Claude API).
 
-        # Add capabilities info
-        context_info = "Pre-loaded bundle (from TP staging)" if self.bundle else "None (standalone mode)"
-        session_info = self.current_session.id if self.current_session else "Will be created"
+        Substrate context is queried on-demand via memory.query(), not injected here.
+        This allows prompt caching for efficiency.
+        """
+        agent_identity = f"""# Research Agent Identity
 
-        prompt += f"""
+You are YARNNN's specialized Research Agent for intelligence gathering and analysis.
 
-**Your Capabilities:**
-- Context: {context_info}
-- Monitoring Domains: {", ".join(self.monitoring_domains)}
-- Session ID: {session_info}
-"""
+**Your Role**: Conduct comprehensive research, gather intelligence, and produce structured findings.
 
-        # Inject knowledge modules if provided
-        if self.knowledge_modules:
-            prompt += "\n\n---\n\n# 📚 YARNNN Knowledge Modules (Procedural Knowledge)\n\n"
-            prompt += "The following knowledge modules provide guidelines on how to work effectively in YARNNN:\n\n"
-            prompt += self.knowledge_modules
+**Monitoring Domains**: {", ".join(self.monitoring_domains)}"""
 
-        # Inject bundle context if available (substrate blocks + reference assets)
-        if self.bundle:
-            prompt += "\n\n---\n\n# 📦 Pre-loaded Context (from TP Staging)\n\n"
+        agent_responsibilities = RESEARCH_AGENT_SYSTEM_PROMPT
 
-            if self.bundle.substrate_blocks:
-                prompt += f"**Substrate Knowledge Base** ({len(self.bundle.substrate_blocks)} blocks):\n\n"
-                for idx, block in enumerate(self.bundle.substrate_blocks[:10], 1):  # Limit to 10 blocks
-                    block_content = block.get('content', '')[:500]  # Limit content length
-                    block_id = block.get('id', 'unknown')
-                    prompt += f"{idx}. [Block {block_id}]\n{block_content}\n\n"
+        available_tools = """## Tools You Have Access To
 
-                if len(self.bundle.substrate_blocks) > 10:
-                    prompt += f"... and {len(self.bundle.substrate_blocks) - 10} more blocks\n\n"
+1. **emit_work_output** (mcp__shared_tools__emit_work_output)
+   - CRITICAL: Use this to save all findings, insights, recommendations
+   - Required fields: output_type, title, body, confidence, metadata, source_block_ids
+   - Example: emit_work_output(output_type="finding", title="Competitor X pricing", ...)
 
-            if self.bundle.reference_assets:
-                prompt += f"**Reference Assets** ({len(self.bundle.reference_assets)} assets):\n\n"
-                for idx, asset in enumerate(self.bundle.reference_assets[:5], 1):  # Limit to 5 assets
-                    asset_name = asset.get('name', 'unknown')
-                    asset_type = asset.get('asset_type', 'unknown')
-                    prompt += f"{idx}. {asset_name} ({asset_type})\n"
+2. **WebSearch** (built-in)
+   - Search the web for current information
+   - Use for live data, news, market information
+   - Complements substrate (historical) with real-time data
 
-                if len(self.bundle.reference_assets) > 5:
-                    prompt += f"... and {len(self.bundle.reference_assets) - 5} more assets\n\n"
+3. **TodoWrite** (for progress tracking)
+   - Use for multi-step research workflows
+   - Helps user see real-time progress"""
 
-            if self.bundle.agent_config:
-                prompt += f"\n**Agent Configuration**: {list(self.bundle.agent_config.keys())}\n"
+        quality_standards = """## Research Quality Standards
 
-        return prompt
+**Accuracy First**:
+- Verify information from multiple sources when possible
+- Assign confidence scores based on evidence quality
+- Flag uncertainty explicitly (don't guess)
+
+**Contextual Awareness**:
+- Query substrate via memory.query() before starting research
+- Check what's already known (avoid redundant research)
+- Reference source_block_ids in emit_work_output for provenance
+- Use on-demand queries for efficiency (fetch only relevant context)"""
+
+        # Use build_agent_system_prompt from orchestration_patterns.py
+        return build_agent_system_prompt(
+            agent_identity=agent_identity,
+            agent_responsibilities=agent_responsibilities,
+            available_tools=available_tools,
+            quality_standards=quality_standards
+        )
 
     async def deep_dive(
         self,
@@ -276,22 +284,12 @@ class ResearchAgentSDK:
         """
         logger.info(f"ResearchAgentSDK.deep_dive: {topic}")
 
-        # Extract source block IDs for provenance tracking
+        # Query substrate for prior knowledge on this topic (on-demand pattern)
         source_block_ids = []
         context_summary = "No prior context available"
 
-        if self.bundle:
-            # NEW PATTERN: Use pre-loaded bundle from TP staging
-            source_block_ids = [
-                str(block.get('id', ''))
-                for block in self.bundle.substrate_blocks
-                if block.get('id')
-            ]
-            context_summary = f"{len(self.bundle.substrate_blocks)} substrate blocks pre-loaded"
-            logger.info(f"Using bundle context: {len(self.bundle.substrate_blocks)} blocks, {len(self.bundle.reference_assets)} assets")
-
-        elif self.memory:
-            # LEGACY PATTERN: Query memory adapter (will be removed)
+        if self.memory:
+            # On-demand substrate query for relevant prior knowledge
             memory_results = await self.memory.query(topic, limit=10)
             context = "\n".join([r.content for r in memory_results])
             source_block_ids = [
@@ -301,7 +299,9 @@ class ResearchAgentSDK:
             ]
             source_block_ids = [bid for bid in source_block_ids if bid]
             context_summary = context if context else "No prior context available"
-            logger.info(f"LEGACY: Using memory adapter query results")
+            logger.info(f"Queried substrate: {len(source_block_ids)} relevant blocks found")
+        else:
+            logger.warning("No memory adapter - skipping substrate query (limited context)")
 
         # Build research prompt
         research_prompt = f"""Conduct comprehensive research on: {topic}
@@ -412,8 +412,9 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
         )
 
         # Update agent session with new claude_session_id
-        if new_session_id:
-            self.current_session.update_claude_session(new_session_id)
+        if new_session_id and self.session:
+            self.session.update_claude_session(new_session_id)
+            logger.info(f"Stored Claude session: {new_session_id}")
 
         results = {
             "topic": topic,

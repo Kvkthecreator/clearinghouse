@@ -37,6 +37,8 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from adapters.memory_adapter import SubstrateMemoryAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
+from agents_sdk.orchestration_patterns import build_agent_system_prompt
+from agents_sdk.work_bundle import WorkBundle
 from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,12 @@ Your core capabilities:
 - Generate professional FILE deliverables (PDF, XLSX, PPTX, DOCX)
 - Synthesize complex information into actionable insights
 - Create data visualizations and charts
+
+**How You Access Context (On-Demand Substrate Queries)**:
+- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- Query substrate on-demand for relevant context: past reports, templates, data sources
+- The agent orchestrator provides memory adapter - you query what you need when you need it
+- This is more efficient than pre-loading all context (lazy loading, token savings)
 
 **CRITICAL: Task Progress Tracking (MANDATORY)**
 You MUST use the TodoWrite tool at the START of every task to show users what you're doing.
@@ -201,13 +209,17 @@ class ReportingAgentSDK:
         anthropic_api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
         default_format: str = "pdf",
-        knowledge_modules: str = "",
-        session: Optional['AgentSession'] = None,
-        bundle: Optional[Any] = None,  # NEW: Pre-loaded context bundle from TP staging
-        memory: Optional['SubstrateMemoryAdapter'] = None,  # DEPRECATED: For backward compatibility
+        session: Optional[AgentSession] = None,
+        memory: Optional[SubstrateMemoryAdapter] = None,
+        bundle: Optional[WorkBundle] = None,
     ):
         """
-        Initialize ReportingAgentSDK.
+        Initialize ReportingAgentSDK with persistent session + substrate access.
+
+        Architecture:
+        - session: Agent SDK conversation history (SDK layer persistence)
+        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
             basket_id: Basket ID for substrate queries
@@ -216,15 +228,13 @@ class ReportingAgentSDK:
             anthropic_api_key: Anthropic API key (from env if None)
             model: Claude model to use
             default_format: Default output format (pdf, xlsx, pptx, docx, markdown)
-            knowledge_modules: Knowledge modules (procedural knowledge) loaded from orchestration layer
-            session: Optional AgentSession from TP (hierarchical session management)
-            bundle: Optional WorkBundle from TP staging (pre-loaded substrate + assets)
-            memory: DEPRECATED - Use bundle instead (kept for backward compatibility)
+            session: AgentSession (persistent conversation history - SDK layer)
+            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
         self.workspace_id = workspace_id
         self.work_ticket_id = work_ticket_id
-        self.knowledge_modules = knowledge_modules
         self.default_format = default_format
 
         # Get API key
@@ -236,33 +246,30 @@ class ReportingAgentSDK:
         self.api_key = anthropic_api_key
         self.model = model
 
-        # NEW PATTERN: Use pre-loaded bundle from TP staging
-        if bundle:
-            self.bundle = bundle
-            logger.info(
-                f"Using WorkBundle from TP staging: {len(bundle.substrate_blocks)} blocks, "
-                f"{len(bundle.reference_assets)} assets"
-            )
-            self.memory = None  # No memory adapter needed - bundle has pre-loaded context
-        elif memory:
-            # LEGACY PATTERN: For backward compatibility (will be removed)
-            self.bundle = None
-            self.memory = memory
-            logger.info(f"LEGACY: Using memory adapter from TP for basket={basket_id}")
+        # YARNNN substrate access (on-demand queries)
+        self.memory = memory
+        if memory:
+            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
         else:
-            # Standalone mode: No pre-loaded context (testing only)
-            self.bundle = None
-            self.memory = None
-            logger.info("Standalone mode: No pre-loaded context (testing mode)")
+            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
 
-        # Use provided session from TP, or will create in async init
+        # Work ticket metadata + asset references (NOT substrate blocks)
+        self.bundle = bundle
+        if bundle:
+            logger.info(
+                f"Using WorkBundle: task='{bundle.task[:50]}...', "
+                f"reference_assets={len(bundle.reference_assets) if hasattr(bundle, 'reference_assets') else 0}"
+            )
+
+        # Agent SDK session (conversation history)
+        self.session = session
         if session:
-            self.current_session = session
-            logger.info(f"Using session from TP: {session.id} (parent={session.parent_session_id})")
+            logger.info(
+                f"Using persistent session: {session.id} "
+                f"(parent={session.parent_session_id}, sdk_session_id={session.sdk_session_id})"
+            )
         else:
-            # Standalone mode: session will be created by async get_or_create in methods
-            self.current_session = None
-            logger.info("Standalone mode: session will be created on first method call")
+            logger.warning("No session provided - will create ephemeral session (not recommended for production)")
 
         # Create MCP server for emit_work_output tool with context baked in
         shared_tools = create_shared_tools_server(
@@ -271,12 +278,10 @@ class ReportingAgentSDK:
             agent_type="reporting"
         )
 
-        # Build Claude SDK options with Skills and MCP server
-        # NOTE: Official SDK v0.1.8+ does NOT have 'tools' parameter
-        # Must use mcp_servers + allowed_tools pattern
+        # Build Claude SDK options with STATIC system prompt (cacheable!)
         self._options = ClaudeAgentOptions(
             model=self.model,
-            system_prompt=self._build_system_prompt(),
+            system_prompt=self._build_static_system_prompt(),  # Static prompt (no bundle context)
             mcp_servers={"shared_tools": shared_tools},
             allowed_tools=[
                 "mcp__shared_tools__emit_work_output",  # Custom tool for structured outputs
@@ -285,7 +290,6 @@ class ReportingAgentSDK:
                 "TodoWrite"  # Task progress tracking for frontend visibility
             ],
             setting_sources=["user", "project"],  # Required for Skills to work
-            # Note: max_tokens is controlled at ClaudeSDKClient.chat() level, not here
         )
 
         logger.info(
@@ -294,28 +298,63 @@ class ReportingAgentSDK:
             f"Skills enabled (PDF/XLSX/PPTX/DOCX)"
         )
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with knowledge modules."""
-        prompt = REPORTING_AGENT_SYSTEM_PROMPT
+    def _build_static_system_prompt(self) -> str:
+        """
+        Build STATIC system prompt (cacheable by Claude API).
 
-        # Add capabilities info
-        prompt += f"""
+        Substrate context is queried on-demand via memory.query(), not injected here.
+        This allows prompt caching for efficiency.
+        """
+        agent_identity = f"""# Reporting Agent Identity
 
-**Your Capabilities**:
-- Memory: Available (SubstrateMemoryAdapter)
-- Default Format: {self.default_format}
-- Skills: PDF, XLSX, PPTX, DOCX (file generation)
-- Code Execution: Python (data processing, charts)
-- Session ID: {self.current_session.id}
-"""
+You are YARNNN's specialized Reporting Agent for professional report and file generation.
 
-        # Inject knowledge modules if provided
-        if self.knowledge_modules:
-            prompt += "\n\n---\n\n# 📚 YARNNN Knowledge Modules (Procedural Knowledge)\n\n"
-            prompt += "The following knowledge modules provide guidelines on how to work effectively in YARNNN:\n\n"
-            prompt += self.knowledge_modules
+**Your Role**: Generate professional reports, executive summaries, and file deliverables (PDF, XLSX, PPTX, DOCX).
 
-        return prompt
+**Default Format**: {self.default_format}"""
+
+        agent_responsibilities = REPORTING_AGENT_SYSTEM_PROMPT
+
+        available_tools = """## Tools You Have Access To
+
+1. **emit_work_output** (mcp__shared_tools__emit_work_output)
+   - CRITICAL: Use this to save all report outputs
+   - Required fields: output_type, title, body, confidence, metadata, source_block_ids
+   - For file outputs: include file_id, file_format, generation_method in metadata
+
+2. **Skill** (built-in for file generation)
+   - Use skill_id="pdf", "pptx", "xlsx", or "docx"
+   - Returns file_id after generation
+   - MUST call emit_work_output after Skill to save the output
+
+3. **code_execution** (built-in Python)
+   - Data processing, calculations, chart generation
+   - Use for complex data transformations
+
+4. **TodoWrite** (for progress tracking)
+   - MANDATORY: Start every task with TodoWrite
+   - Helps user see real-time progress"""
+
+        quality_standards = """## Report Quality Standards
+
+**Professional Output**:
+- Clear, concise executive-friendly language
+- Data-driven insights with supporting evidence
+- Actionable recommendations
+- Visual aids (charts, tables) for clarity
+
+**Contextual Awareness**:
+- Query substrate via memory.query() for past reports, templates, data
+- Reference source_block_ids in emit_work_output for provenance
+- Use on-demand queries for efficiency (fetch only relevant context)"""
+
+        # Use build_agent_system_prompt from orchestration_patterns.py
+        return build_agent_system_prompt(
+            agent_identity=agent_identity,
+            agent_responsibilities=agent_responsibilities,
+            available_tools=available_tools,
+            quality_standards=quality_standards
+        )
 
     async def generate(
         self,
@@ -544,8 +583,8 @@ Please generate a comprehensive {report_type} report in {format} format about {t
         )
 
         # Update agent session with new claude_session_id
-        if new_session_id:
-            self.current_session.update_claude_session(new_session_id)
+        if new_session_id and self.session:
+            self.session.update_claude_session(new_session_id)
             logger.info(f"Stored Claude session: {new_session_id}")
 
         results = {
@@ -625,18 +664,12 @@ Please generate a comprehensive {report_type} report in {format} format about {t
         recipe_system_prompt += f"""
 
 **Your Capabilities**:
-- Memory: Available (SubstrateMemoryAdapter)
+- Memory: Available (SubstrateMemoryAdapter) - use memory.query() for on-demand context
 - Default Format: {self.default_format}
 - Skills: PDF, XLSX, PPTX, DOCX (file generation)
 - Code Execution: Python (data processing, charts)
-- Session ID: {self.current_session.id if self.current_session else 'N/A'}
+- Session ID: {self.session.id if self.session else 'N/A'}
 """
-
-        # Inject knowledge modules if provided
-        if self.knowledge_modules:
-            recipe_system_prompt += "\n\n---\n\n# 📚 YARNNN Knowledge Modules (Procedural Knowledge)\n\n"
-            recipe_system_prompt += "The following knowledge modules provide guidelines on how to work effectively in YARNNN:\n\n"
-            recipe_system_prompt += self.knowledge_modules
 
         # 2. Build user prompt from task_breakdown
         deliverable_intent = recipe_context.get("deliverable_intent", {})
@@ -832,8 +865,8 @@ Execute this recipe and emit work_output with validation metadata using the emit
         )
 
         # Update agent session with new claude_session_id
-        if new_session_id and self.current_session:
-            self.current_session.update_claude_session(new_session_id)
+        if new_session_id and self.session:
+            self.session.update_claude_session(new_session_id)
             logger.info(f"Stored Claude session: {new_session_id}")
 
         # Calculate execution time

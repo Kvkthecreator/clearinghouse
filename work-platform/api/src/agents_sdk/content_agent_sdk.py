@@ -34,6 +34,7 @@ from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AgentDefinition
 
+from adapters.memory_adapter import SubstrateMemoryAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt, TOOL_CALLING_GUIDANCE
 from agents_sdk.work_bundle import WorkBundle
@@ -56,10 +57,11 @@ Your core capabilities:
 
 **IMPORTANT**: You create TEXT CONTENT ONLY. You do NOT generate files (PDF, DOCX, PPTX). File generation is handled by the ReportingAgent.
 
-**How You Receive Context**:
-- Research findings and substrate context are provided in USER MESSAGES, not system prompt
-- Each work ticket includes a "Work Assignment Context" section with pre-loaded research outputs
-- You build on this substrate layer (shared knowledge) to create platform-specific content
+**How You Access Context (On-Demand Substrate Queries)**:
+- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- Query substrate on-demand for relevant context: brand voice examples, past posts, research findings
+- The agent orchestrator provides memory adapter - you query what you need when you need it
+- This is more efficient than pre-loading all context (only fetch relevant substrate blocks)
 
 **Platform Delegation via Task Tool**:
 Use the Task tool to delegate to platform specialists (shared context approach):
@@ -284,10 +286,16 @@ class ContentAgentSDK:
         enabled_platforms: Optional[List[str]] = None,
         brand_voice_mode: Literal["adaptive", "strict", "creative"] = "adaptive",
         session: Optional['AgentSession'] = None,
-        bundle: Optional[WorkBundle] = None,  # Pre-loaded context bundle from TP staging
+        memory: Optional[SubstrateMemoryAdapter] = None,
+        bundle: Optional[WorkBundle] = None,
     ):
         """
-        Initialize ContentAgentSDK with persistent session architecture.
+        Initialize ContentAgentSDK with persistent session + substrate access.
+
+        Architecture:
+        - session: Agent SDK conversation history (SDK layer persistence)
+        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
             basket_id: Basket ID for context tracking
@@ -297,8 +305,9 @@ class ContentAgentSDK:
             model: Claude model to use
             enabled_platforms: Platforms to support (default: ["twitter", "linkedin", "blog", "instagram"])
             brand_voice_mode: Voice learning approach
-            session: AgentSession from AgentSessionManager (persistent sessions)
-            bundle: WorkBundle from TP staging (substrate context injected via user messages)
+            session: AgentSession (persistent conversation history - SDK layer)
+            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
         self.workspace_id = workspace_id
@@ -315,15 +324,22 @@ class ContentAgentSDK:
         self.api_key = anthropic_api_key
         self.model = model
 
-        # Store bundle for user message injection (substrate context NOT in system prompt)
+        # YARNNN substrate access (on-demand queries)
+        self.memory = memory
+        if memory:
+            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
+        else:
+            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
+
+        # Work ticket metadata + asset references (NOT substrate blocks)
         self.bundle = bundle
         if bundle:
             logger.info(
-                f"Using WorkBundle: {len(bundle.substrate_blocks)} substrate blocks, "
-                f"{len(bundle.reference_assets)} reference assets"
+                f"Using WorkBundle: task='{bundle.task[:50]}...', "
+                f"reference_assets={len(bundle.reference_assets) if hasattr(bundle, 'reference_assets') else 0}"
             )
 
-        # Use provided session from AgentSessionManager (persistent sessions)
+        # Agent SDK session (conversation history)
         self.session = session
         if session:
             logger.info(
@@ -417,9 +433,10 @@ You are YARNNN's specialized Content Agent for {", ".join(self.enabled_platforms
 - Instagram: Visual-first captions (150-300 words), emoji strategy, 20-30 hashtags
 
 **Contextual Awareness**:
-- Always reference substrate blocks when available
-- Include source_block_ids in emit_work_output for provenance
-- Build on prior work in conversation history"""
+- Query substrate via memory.query() for relevant context before creating content
+- Always include source_block_ids in emit_work_output for provenance tracking
+- Build on prior work in conversation history
+- Use on-demand queries (efficient, lazy loading) rather than expecting pre-loaded context"""
 
         # Use build_agent_system_prompt from orchestration_patterns.py
         return build_agent_system_prompt(
@@ -428,60 +445,6 @@ You are YARNNN's specialized Content Agent for {", ".join(self.enabled_platforms
             available_tools=available_tools,
             quality_standards=quality_standards
         )
-
-    def _build_context_message(self, task_description: str) -> str:
-        """
-        Build user message with substrate context injection.
-
-        This is where WorkBundle substrate blocks are injected (NOT in system prompt).
-        Keeps system prompt static for caching while providing dynamic context per work ticket.
-
-        Args:
-            task_description: The specific task for this work ticket
-
-        Returns:
-            Formatted user message with task + substrate context
-        """
-        message = f"# Work Assignment Context\n\n## Task\n{task_description}\n\n"
-
-        # Inject substrate context from WorkBundle if available
-        if self.bundle and self.bundle.substrate_blocks:
-            message += f"## Substrate Context ({len(self.bundle.substrate_blocks)} research outputs)\n\n"
-            message += "You have access to the following research findings from prior work:\n\n"
-
-            for i, block in enumerate(self.bundle.substrate_blocks, 1):
-                message += f"### Research Output {i}: {block.get('title', 'Untitled')}\n"
-                message += f"- **ID**: `{block.get('id', 'unknown')}`\n"
-                message += f"- **Type**: {block.get('output_type', 'unknown')}\n"
-                message += f"- **Source**: {block.get('source', 'research_agent')}\n"
-                message += f"- **Confidence**: {block.get('confidence', 'N/A')}\n\n"
-
-                content = block.get('content', '')
-                if isinstance(content, dict):
-                    # Structured content - show formatted
-                    import json
-                    content_str = json.dumps(content, indent=2)
-                    message += f"**Content**:\n```json\n{content_str[:2000]}\n```\n\n"
-                elif isinstance(content, str):
-                    # Text content - truncate if too long
-                    if len(content) > 2000:
-                        message += f"**Content** (truncated):\n{content[:2000]}...\n\n"
-                    else:
-                        message += f"**Content**:\n{content}\n\n"
-                else:
-                    message += f"**Content**:\n{str(content)[:2000]}\n\n"
-
-                message += "---\n\n"
-
-        # Add reference assets if available
-        if self.bundle and self.bundle.reference_assets:
-            message += f"## Reference Assets ({len(self.bundle.reference_assets)} assets)\n\n"
-            for i, asset in enumerate(self.bundle.reference_assets, 1):
-                message += f"### Asset {i}: {asset.get('name', 'Unnamed')}\n"
-                message += f"- **Type**: {asset.get('type', 'unknown')}\n"
-                message += f"- **Description**: {asset.get('description', 'N/A')}\n\n"
-
-        return message
 
     async def create(
         self,

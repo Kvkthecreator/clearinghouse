@@ -1,11 +1,15 @@
 """
-Work Bundle - In-memory context package for specialist agent execution.
+Work Bundle - Work ticket metadata package for specialist agent execution.
 
-This is NOT a database model - it's a transient data structure created during
-TP's staging phase and passed to specialist agents for execution.
+This is NOT a database model - it's a transient data structure passed to agents.
 
-Purpose: Bundle all necessary context (substrate + assets + config) so agents
-don't need to make their own queries.
+Architecture (2025-11):
+- WorkBundle = METADATA ONLY (task description, priorities, asset pointers)
+- Substrate = QUERIED ON-DEMAND by agents via SubstrateMemoryAdapter (memory.query())
+- This separation provides: token efficiency (lazy loading), agent autonomy, clear concerns
+
+WorkBundle is the "agent-facing work ticket" - a stamp of work details,
+NOT a container for substrate context.
 """
 
 from typing import Any, Dict, List, Optional
@@ -13,10 +17,17 @@ from typing import Any, Dict, List, Optional
 
 class WorkBundle:
     """
-    Complete context bundle for specialist agent execution.
+    Work ticket metadata package for specialist agent execution.
 
-    Created by TP during staging phase (work_orchestration tool).
-    Contains everything agent needs - no additional substrate queries required.
+    Architecture:
+    - WorkBundle contains: task metadata, reference asset pointers, agent config
+    - WorkBundle does NOT contain: substrate blocks (DEPRECATED - agents query on-demand)
+    - Agents access substrate via: SubstrateMemoryAdapter.query() (on-demand, lazy)
+
+    This separation enables:
+    - Token efficiency (agents query only what they need)
+    - Agent autonomy (agents decide their own context)
+    - Clear separation (session ≠ substrate ≠ work metadata)
 
     This is an in-memory structure, not persisted to database.
     """
@@ -33,14 +44,16 @@ class WorkBundle:
         task: str,
         agent_type: str,
         priority: str = "medium",
-        # Pre-loaded context from staging
-        substrate_blocks: Optional[List[Dict[str, Any]]] = None,
+        # Reference asset pointers (NOT full content)
         reference_assets: Optional[List[Dict[str, Any]]] = None,
+        # Agent configuration
         agent_config: Optional[Dict[str, Any]] = None,
         user_requirements: Optional[Dict[str, Any]] = None,
+        # DEPRECATED: substrate_blocks - agents should query via memory.query() instead
+        substrate_blocks: Optional[List[Dict[str, Any]]] = None,
     ):
         """
-        Initialize work bundle.
+        Initialize work bundle (metadata only).
 
         Args:
             work_request_id: Work request UUID
@@ -51,10 +64,10 @@ class WorkBundle:
             task: Task description from user
             agent_type: "research" | "content" | "reporting"
             priority: "high" | "medium" | "low"
-            substrate_blocks: Pre-loaded blocks from substrate (long-term knowledge)
-            reference_assets: Pre-loaded assets for agent (task-specific resources)
+            reference_assets: Asset pointers (file IDs, URLs) - NOT full content
             agent_config: Agent configuration from database
             user_requirements: Additional requirements from chat collection
+            substrate_blocks: DEPRECATED - Use memory.query() instead (kept for backward compat)
         """
         self.work_request_id = work_request_id
         self.work_ticket_id = work_ticket_id
