@@ -865,12 +865,10 @@ async def test_inter_agent_flow():
         from agents_sdk.content_agent_sdk import ContentAgentSDK
         from agents_sdk.work_bundle import WorkBundle
         from claude_agent_sdk import ClaudeSDKClient
-        from config.supabase_client import get_supabase_client
+        from app.utils.supabase_client import supabase_admin_client as supabase
 
         # Step 1: Query database for research outputs from previous test
         print("[STEP 1] Querying database for research work_outputs...", flush=True)
-
-        supabase = get_supabase_client()
 
         # Query work_outputs from test-basket-research (created by research workflow test)
         result = supabase.table("work_outputs") \
