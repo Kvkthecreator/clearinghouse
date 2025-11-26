@@ -147,6 +147,70 @@ async def check_agent_configuration():
         }
 
 
+@router.post("/test-basic-sdk")
+async def test_basic_sdk():
+    """
+    Test basic SDK functionality WITHOUT Skills.
+
+    This will confirm:
+    1. SDK can connect
+    2. SDK can receive text responses
+    3. SDK iterator works properly
+
+    Returns basic response info.
+    """
+    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+
+    print("[BASIC SDK TEST] Starting...", flush=True)
+
+    try:
+        options = ClaudeAgentOptions(
+            model="claude-sonnet-4-5",
+            system_prompt="You are a helpful assistant. Respond concisely.",
+            allowed_tools=[],  # NO tools, just basic chat
+            setting_sources=["user", "project"],
+        )
+
+        response_text = ""
+        message_count = 0
+
+        async with ClaudeSDKClient(options=options) as client:
+            print("[BASIC SDK TEST] Connecting...", flush=True)
+            await client.connect()
+
+            print("[BASIC SDK TEST] Sending simple prompt...", flush=True)
+            await client.query("Say hello and count to 3.")
+
+            print("[BASIC SDK TEST] Iterating responses...", flush=True)
+            async for message in client.receive_response():
+                message_count += 1
+                print(f"[BASIC SDK TEST] Message #{message_count}", flush=True)
+
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    for block in message.content:
+                        if hasattr(block, 'type') and block.type == 'text':
+                            response_text += block.text
+                            print(f"[BASIC SDK TEST] Got text: {block.text[:50]}...", flush=True)
+
+            print(f"[BASIC SDK TEST] Complete: {message_count} messages, {len(response_text)} chars", flush=True)
+
+        return {
+            "status": "success",
+            "message_count": message_count,
+            "response_text": response_text,
+            "response_length": len(response_text)
+        }
+
+    except Exception as e:
+        print(f"[BASIC SDK TEST] FAILED: {e}", flush=True)
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 @router.post("/test-skill-invocation")
 async def test_skill_invocation():
     """
@@ -271,6 +335,70 @@ DO NOT just describe what you would create - actually USE the Skill tool to crea
 
     except Exception as e:
         print(f"[SKILL TEST] ❌ FAILED with exception: {e}", flush=True)
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.post("/test-basic-sdk")
+async def test_basic_sdk():
+    """
+    Test basic SDK functionality WITHOUT Skills.
+
+    This will confirm:
+    1. SDK can connect
+    2. SDK can receive text responses
+    3. SDK iterator works properly
+
+    Returns basic response info.
+    """
+    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+
+    print("[BASIC SDK TEST] Starting...", flush=True)
+
+    try:
+        options = ClaudeAgentOptions(
+            model="claude-sonnet-4-5",
+            system_prompt="You are a helpful assistant. Respond concisely.",
+            allowed_tools=[],  # NO tools, just basic chat
+            setting_sources=["user", "project"],
+        )
+
+        response_text = ""
+        message_count = 0
+
+        async with ClaudeSDKClient(options=options) as client:
+            print("[BASIC SDK TEST] Connecting...", flush=True)
+            await client.connect()
+
+            print("[BASIC SDK TEST] Sending simple prompt...", flush=True)
+            await client.query("Say hello and count to 3.")
+
+            print("[BASIC SDK TEST] Iterating responses...", flush=True)
+            async for message in client.receive_response():
+                message_count += 1
+                print(f"[BASIC SDK TEST] Message #{message_count}", flush=True)
+
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    for block in message.content:
+                        if hasattr(block, 'type') and block.type == 'text':
+                            response_text += block.text
+                            print(f"[BASIC SDK TEST] Got text: {block.text[:50]}...", flush=True)
+
+            print(f"[BASIC SDK TEST] Complete: {message_count} messages, {len(response_text)} chars", flush=True)
+
+        return {
+            "status": "success",
+            "message_count": message_count,
+            "response_text": response_text,
+            "response_length": len(response_text)
+        }
+
+    except Exception as e:
+        print(f"[BASIC SDK TEST] FAILED: {e}", flush=True)
         import traceback
         return {
             "status": "error",
