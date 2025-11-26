@@ -582,3 +582,112 @@ You: [Use TodoWrite tool with todos=[
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+@router.post("/test-emit-work-output")
+async def test_emit_work_output():
+    """
+    Phase 3: emit_work_output Tool Validation
+
+    Tests if the emit_work_output MCP tool can be invoked by the Claude SDK.
+
+    This will confirm:
+    1. SDK accepts emit_work_output in allowed_tools
+    2. Agent successfully invokes the tool
+    3. Tool creates work_outputs in database
+
+    Returns:
+        - tool_calls: List of tools invoked (should include emit_work_output)
+        - emit_invoked: Whether emit_work_output was called
+        - response_text: Agent's text response
+    """
+    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+
+    print("[EMIT TEST] Starting...", flush=True)
+
+    try:
+        options = ClaudeAgentOptions(
+            model="claude-sonnet-4-5",
+            system_prompt="""You are a report writer. When you finish writing content, you MUST use the emit_work_output tool to save it.
+
+**CRITICAL**: After writing content, use emit_work_output to save your work.
+
+Required parameters:
+- output_type: "report_draft", "outline", "analysis", etc.
+- title: Clear title for the output
+- body: The actual content (markdown format)
+- generation_method: "text" (for text-based outputs)
+
+Example:
+User: "Write a brief summary about AI"
+You: [Write the summary, then use emit_work_output tool to save it]
+
+DO NOT just write content - you MUST also save it using emit_work_output.""",
+            allowed_tools=["emit_work_output"],
+        )
+
+        tool_calls = []
+        emit_invoked = False
+        response_text = ""
+
+        async with ClaudeSDKClient(options=options) as client:
+            print("[EMIT TEST] Connecting...", flush=True)
+            await client.connect()
+
+            test_prompt = "Write a 2-sentence summary about cloud computing and save it as a report draft."
+            print(f"[EMIT TEST] Sending prompt: {test_prompt}", flush=True)
+            await client.query(test_prompt)
+
+            print("[EMIT TEST] Iterating responses...", flush=True)
+            async for message in client.receive_response():
+                print(f"[EMIT TEST] Message type: {type(message).__name__}", flush=True)
+
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    for block in message.content:
+                        # Extract text
+                        if hasattr(block, 'text'):
+                            response_text += block.text
+                            print(f"[EMIT TEST] Text: {block.text[:100]}...", flush=True)
+
+                        # Track tool use
+                        if hasattr(block, 'name'):  # ToolUseBlock
+                            tool_name = block.name
+                            tool_input = block.input if hasattr(block, 'input') else {}
+
+                            tool_calls.append({
+                                "tool": tool_name,
+                                "input": str(tool_input)[:300]  # Truncate for display
+                            })
+
+                            print(f"[EMIT TEST] Tool invoked: {tool_name}", flush=True)
+
+                            if tool_name == "emit_work_output":
+                                emit_invoked = True
+                                print(f"[EMIT TEST] ✅ emit_work_output invoked", flush=True)
+                                print(f"[EMIT TEST] Output type: {tool_input.get('output_type')}", flush=True)
+                                print(f"[EMIT TEST] Title: {tool_input.get('title')}", flush=True)
+
+        result = {
+            "status": "success",
+            "test_prompt": test_prompt,
+            "tool_calls": tool_calls,
+            "emit_invoked": emit_invoked,
+            "response_text": response_text[:500] if response_text else "(no text)",
+            "response_length": len(response_text),
+        }
+
+        if emit_invoked:
+            print("[EMIT TEST] ✅ SUCCESS: emit_work_output was invoked", flush=True)
+        else:
+            print(f"[EMIT TEST] ⚠️ WARNING: emit_work_output NOT invoked. Tools called: {[tc['tool'] for tc in tool_calls]}", flush=True)
+
+        return result
+
+    except Exception as e:
+        print(f"[EMIT TEST] ❌ FAILED: {e}", flush=True)
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }

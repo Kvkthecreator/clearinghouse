@@ -128,6 +128,7 @@ app.add_middleware(
         "/api/diagnostics/test-basic-sdk",  # Basic SDK test endpoint (no auth for debugging)
         "/api/diagnostics/test-minimal-sdk",  # Minimal SDK test - Phase 1 core hardening (no auth)
         "/api/diagnostics/test-todowrite",  # TodoWrite test - Phase 2 core hardening (no auth)
+        "/api/diagnostics/test-emit-work-output",  # emit_work_output test - Phase 3 core hardening (no auth)
     },
     exempt_prefixes={
         "/health",
