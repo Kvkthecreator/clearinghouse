@@ -9,7 +9,8 @@
  * - Actions (view output, retry, download)
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createServerComponentClient } from "@/lib/supabase/clients";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import TicketTrackingClient from "./TicketTrackingClient";
 
@@ -22,11 +23,8 @@ export default async function TicketTrackingPage({ params }: PageProps) {
 
   console.log('[TicketTrackingPage] Loading ticket:', { projectId, ticketId });
 
-  // Use anon client for public ticket viewing (RLS handles security)
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  // Use authenticated server client (RLS enforced with user session)
+  const supabase = createServerComponentClient({ cookies });
 
   // Fetch work ticket with outputs
   const { data: ticket, error: ticketError } = await supabase

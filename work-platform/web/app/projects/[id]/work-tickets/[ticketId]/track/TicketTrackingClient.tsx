@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/lib/supabase/clients";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -57,11 +57,8 @@ export default function TicketTrackingClient({
   const [ticket, setTicket] = useState<WorkTicket>(initialTicket);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Create Supabase client for Realtime
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  // Create authenticated Supabase client for Realtime (singleton pattern)
+  const supabase = createBrowserClient();
 
   // Subscribe to real-time ticket updates
   useEffect(() => {
