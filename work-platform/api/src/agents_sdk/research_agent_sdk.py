@@ -36,6 +36,7 @@ from adapters.substrate_adapter import SubstrateQueryAdapter as SubstrateAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt
 from agents_sdk.work_bundle import WorkBundle
+from agents_sdk.stream_processor import process_sdk_stream, emit_completion_status
 from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
@@ -333,10 +334,8 @@ You may emit multiple outputs. Each will be reviewed by the user.
 
 Please conduct thorough research and synthesis, emitting structured outputs for all significant findings."""
 
-        # Execute with Claude SDK
-        response_text = ""
+        # Execute with Claude SDK using shared stream processor
         new_session_id = None
-        work_outputs = []
 
         try:
             # NOTE: api_key comes from ANTHROPIC_API_KEY env var (SDK reads it automatically)
@@ -354,48 +353,12 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
                 # Send query
                 await client.query(research_prompt)
 
-                # Collect responses and parse tool results
-                async for message in client.receive_response():
-                    logger.debug(f"SDK message type: {type(message).__name__}")
-
-                    # Process content blocks
-                    if hasattr(message, 'content') and isinstance(message.content, list):
-                        for block in message.content:
-                            if not hasattr(block, 'type'):
-                                continue
-
-                            block_type = block.type
-                            logger.debug(f"SDK block type: {block_type}")
-
-                            # Text blocks
-                            if hasattr(block, 'text'):
-                                response_text += block.text
-
-                            # Tool result blocks (extract work outputs)
-                            elif block_type == 'tool_result':
-                                tool_name = getattr(block, 'tool_name', '')
-                                logger.debug(f"Tool result from: {tool_name}")
-
-                                if tool_name == 'emit_work_output':
-                                    try:
-                                        result_content = getattr(block, 'content', None)
-                                        if result_content:
-                                            import json
-                                            if isinstance(result_content, str):
-                                                output_data = json.loads(result_content)
-                                            else:
-                                                output_data = result_content
-
-                                            # Convert to WorkOutput object if needed
-                                            from shared.work_output_tools import WorkOutput
-                                            if isinstance(output_data, dict):
-                                                work_output = WorkOutput(**output_data)
-                                            else:
-                                                work_output = output_data
-                                            work_outputs.append(work_output)
-                                            logger.info(f"Captured work output: {output_data.get('title', 'untitled')}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse work output: {e}", exc_info=True)
+                # Process stream using shared utility (handles TodoWrite streaming + work output capture)
+                stream_result = await process_sdk_stream(
+                    client,
+                    work_ticket_id=self.work_ticket_id,
+                    agent_type="research"
+                )
 
                 # Get session ID from client
                 new_session_id = getattr(client, 'session_id', None)
@@ -403,12 +366,18 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
 
         except Exception as e:
             logger.error(f"Research deep_dive failed: {e}")
+            # Emit failure status to frontend
+            emit_completion_status(self.work_ticket_id, "failed")
             raise
+
+        # Emit completion status to frontend
+        emit_completion_status(self.work_ticket_id, "completed")
 
         # Log results
         logger.info(
-            f"Deep-dive produced {len(work_outputs)} structured outputs: "
-            f"{[o.output_type for o in work_outputs]}"
+            f"Deep-dive produced {len(stream_result.work_outputs)} structured outputs, "
+            f"{len(stream_result.tool_calls)} tool calls, "
+            f"{len(stream_result.final_todos)} final todos"
         )
 
         # Update agent session with new claude_session_id
@@ -419,17 +388,19 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
         results = {
             "topic": topic,
             "timestamp": datetime.utcnow().isoformat(),
-            "work_outputs": [o.to_dict() for o in work_outputs],
-            "output_count": len(work_outputs),
+            "work_outputs": stream_result.work_outputs,  # Already dicts from stream processor
+            "output_count": len(stream_result.work_outputs),
             "source_block_ids": source_block_ids,
             "agent_type": "research",
             "basket_id": self.basket_id,
             "work_ticket_id": self.work_ticket_id,
-            "claude_session_id": new_session_id,  # NEW: for session continuity
-            "response_text": response_text,  # For debugging/logging
+            "claude_session_id": new_session_id,
+            "response_text": stream_result.response_text,
+            "final_todos": stream_result.final_todos,  # For work ticket metadata
+            "tool_calls": stream_result.tool_calls,  # For debugging/logging
         }
 
-        logger.info(f"Deep-dive research complete: {topic} with {len(work_outputs)} outputs")
+        logger.info(f"Deep-dive research complete: {topic} with {len(stream_result.work_outputs)} outputs")
 
         return results
 

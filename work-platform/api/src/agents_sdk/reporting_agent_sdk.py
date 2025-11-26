@@ -39,6 +39,7 @@ from adapters.substrate_adapter import SubstrateQueryAdapter as SubstrateAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt
 from agents_sdk.work_bundle import WorkBundle
+from agents_sdk.stream_processor import process_sdk_stream, emit_completion_status
 from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
@@ -461,10 +462,8 @@ Remember:
 
 Please generate a comprehensive {report_type} report in {format} format about {topic}."""
 
-        # Execute with Claude SDK
-        response_text = ""
+        # Execute with Claude SDK using shared stream processor
         new_session_id = None
-        work_outputs = []
 
         try:
             # NOTE: api_key comes from ANTHROPIC_API_KEY env var (SDK reads it automatically)
@@ -482,91 +481,12 @@ Please generate a comprehensive {report_type} report in {format} format about {t
                 # Send query
                 await client.query(report_prompt)
 
-                # Collect responses and parse tool results
-                logger.info("[REPORTING-GENERATE] Starting SDK response iteration...")
-                message_count = 0
-
-                async for message in client.receive_response():
-                    message_count += 1
-                    message_type = type(message).__name__
-                    logger.info(f"[REPORTING-GENERATE] Message #{message_count}: type={message_type}")
-
-                    # Process content blocks
-                    if hasattr(message, 'content') and isinstance(message.content, list):
-                        content_blocks = message.content
-                        logger.info(f"[REPORTING-GENERATE] Processing {len(content_blocks)} content blocks")
-
-                        for idx, block in enumerate(content_blocks):
-                            if not hasattr(block, 'type'):
-                                logger.warning(f"[REPORTING-GENERATE] Block #{idx} missing 'type' attribute")
-                                continue
-
-                            block_type = block.type
-                            logger.info(f"[REPORTING-GENERATE] Block #{idx}: type={block_type}")
-
-                            # Text blocks
-                            if hasattr(block, 'text'):
-                                text_length = len(block.text)
-                                text_preview = block.text[:100] if block.text else ""
-                                logger.info(f"[REPORTING-GENERATE] 📝 Text block: {text_length} chars - Preview: {text_preview}...")
-                                response_text += block.text
-
-                            # Tool use blocks
-                            elif block_type == 'tool_use':
-                                tool_name = getattr(block, 'name', 'unknown')
-                                tool_input = getattr(block, 'input', {})
-                                logger.info(f"[REPORTING-GENERATE] ⚙️ Tool use detected: {tool_name} with input keys: {list(tool_input.keys()) if isinstance(tool_input, dict) else 'N/A'}")
-
-                            # Tool result blocks (extract work outputs + todo updates)
-                            elif block_type == 'tool_result':
-                                tool_name = getattr(block, 'tool_name', '')
-                                logger.info(f"[REPORTING-GENERATE] ✅ Tool result from: {tool_name}")
-
-                                if tool_name == 'emit_work_output':
-                                    try:
-                                        result_content = getattr(block, 'content', None)
-                                        if result_content:
-                                            import json
-                                            if isinstance(result_content, str):
-                                                output_data = json.loads(result_content)
-                                            else:
-                                                output_data = result_content
-
-                                            # Convert to WorkOutput object if needed
-                                            from shared.work_output_tools import WorkOutput
-                                            if isinstance(output_data, dict):
-                                                work_output = WorkOutput(**output_data)
-                                            else:
-                                                work_output = output_data
-                                            work_outputs.append(work_output)
-                                            logger.info(f"Captured work output: {output_data.get('title', 'untitled')}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse work output: {e}", exc_info=True)
-
-                                elif tool_name == 'TodoWrite':
-                                    try:
-                                        # Capture todo updates for frontend streaming
-                                        result_content = getattr(block, 'content', None)
-                                        if result_content:
-                                            import json
-                                            if isinstance(result_content, str):
-                                                todo_data = json.loads(result_content)
-                                            else:
-                                                todo_data = result_content
-
-                                            # Stream to frontend via task_streaming.py
-                                            from app.work.task_streaming import emit_task_update
-                                            emit_task_update(self.work_ticket_id, {
-                                                "type": "todo_update",
-                                                "todos": todo_data,
-                                                "source": "agent"
-                                            })
-                                            logger.info(f"Todo update: {len(todo_data.get('todos', []))} items")
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse todo update: {e}", exc_info=True)
-
-                # Log iteration completion summary
-                logger.info(f"[REPORTING-RECIPE] Iteration complete: {message_count} messages, {len(work_outputs)} outputs, {len(response_text)} chars response text")
+                # Process stream using shared utility (handles TodoWrite streaming + work output capture)
+                stream_result = await process_sdk_stream(
+                    client,
+                    work_ticket_id=self.work_ticket_id,
+                    agent_type="reporting"
+                )
 
                 # Get session ID from client
                 new_session_id = getattr(client, 'session_id', None)
@@ -574,12 +494,18 @@ Please generate a comprehensive {report_type} report in {format} format about {t
 
         except Exception as e:
             logger.error(f"Report generation failed: {e}")
+            # Emit failure status to frontend
+            emit_completion_status(self.work_ticket_id, "failed")
             raise
+
+        # Emit completion status to frontend
+        emit_completion_status(self.work_ticket_id, "completed")
 
         # Log results
         logger.info(
-            f"Report generation produced {len(work_outputs)} structured outputs: "
-            f"{[o.output_type for o in work_outputs]}"
+            f"Report generation produced {len(stream_result.work_outputs)} structured outputs, "
+            f"{len(stream_result.tool_calls)} tool calls, "
+            f"{len(stream_result.final_todos)} final todos"
         )
 
         # Update agent session with new claude_session_id
@@ -592,17 +518,19 @@ Please generate a comprehensive {report_type} report in {format} format about {t
             "format": format,
             "topic": topic,
             "timestamp": datetime.utcnow().isoformat(),
-            "work_outputs": [o.to_dict() for o in work_outputs],
-            "output_count": len(work_outputs),
+            "work_outputs": stream_result.work_outputs,  # Already dicts from stream processor
+            "output_count": len(stream_result.work_outputs),
             "source_block_ids": source_block_ids,
             "agent_type": "reporting",
             "basket_id": self.basket_id,
             "work_ticket_id": self.work_ticket_id,
-            "claude_session_id": new_session_id,  # NEW: for session continuity
-            "response_text": response_text,  # For debugging/logging
+            "claude_session_id": new_session_id,
+            "response_text": stream_result.response_text,
+            "final_todos": stream_result.final_todos,  # For work ticket metadata
+            "tool_calls": stream_result.tool_calls,  # For debugging/logging
         }
 
-        logger.info(f"Report generation complete: {report_type} in {format} with {len(work_outputs)} outputs")
+        logger.info(f"Report generation complete: {report_type} in {format} with {len(stream_result.work_outputs)} outputs")
 
         return results
 
@@ -734,10 +662,8 @@ Expected Outcome: {deliverable_intent.get('outcome', 'Professional deliverable')
 Execute this recipe and emit work_output with validation metadata using the emit_work_output tool.
 """
 
-        # 3. Execute via ClaudeSDKClient (same pattern as generate method)
-        response_text = ""
+        # 3. Execute via ClaudeSDKClient using shared stream processor
         new_session_id = None
-        work_outputs = []
 
         try:
             # Create temporary options with recipe system prompt
@@ -761,91 +687,12 @@ Execute this recipe and emit work_output with validation metadata using the emit
                 # Send query
                 await client.query(user_prompt)
 
-                # Collect responses and parse tool results
-                logger.info("[REPORTING-RECIPE] Starting SDK response iteration...")
-                message_count = 0
-
-                async for message in client.receive_response():
-                    message_count += 1
-                    message_type = type(message).__name__
-                    logger.info(f"[REPORTING-RECIPE] Message #{message_count}: type={message_type}")
-
-                    # Process content blocks
-                    if hasattr(message, 'content') and isinstance(message.content, list):
-                        content_blocks = message.content
-                        logger.info(f"[REPORTING-RECIPE] Processing {len(content_blocks)} content blocks")
-
-                        for idx, block in enumerate(content_blocks):
-                            if not hasattr(block, 'type'):
-                                logger.warning(f"[REPORTING-RECIPE] Block #{idx} missing 'type' attribute")
-                                continue
-
-                            block_type = block.type
-                            logger.info(f"[REPORTING-RECIPE] Block #{idx}: type={block_type}")
-
-                            # Text blocks
-                            if hasattr(block, 'text'):
-                                text_length = len(block.text)
-                                text_preview = block.text[:100] if block.text else ""
-                                logger.info(f"[REPORTING-RECIPE] 📝 Text block: {text_length} chars - Preview: {text_preview}...")
-                                response_text += block.text
-
-                            # Tool use blocks
-                            elif block_type == 'tool_use':
-                                tool_name = getattr(block, 'name', 'unknown')
-                                tool_input = getattr(block, 'input', {})
-                                logger.info(f"[REPORTING-RECIPE] ⚙️ Tool use detected: {tool_name} with input keys: {list(tool_input.keys()) if isinstance(tool_input, dict) else 'N/A'}")
-
-                            # Tool result blocks (extract work outputs + todo updates)
-                            elif block_type == 'tool_result':
-                                tool_name = getattr(block, 'tool_name', '')
-                                logger.info(f"[REPORTING-RECIPE] ✅ Tool result from: {tool_name}")
-
-                                if tool_name == 'emit_work_output':
-                                    try:
-                                        result_content = getattr(block, 'content', None)
-                                        if result_content:
-                                            import json
-                                            if isinstance(result_content, str):
-                                                output_data = json.loads(result_content)
-                                            else:
-                                                output_data = result_content
-
-                                            # Convert to WorkOutput object if needed
-                                            from shared.work_output_tools import WorkOutput
-                                            if isinstance(output_data, dict):
-                                                work_output = WorkOutput(**output_data)
-                                            else:
-                                                work_output = output_data
-                                            work_outputs.append(work_output)
-                                            logger.info(f"Captured work output: {output_data.get('title', 'untitled')}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse work output: {e}", exc_info=True)
-
-                                elif tool_name == 'TodoWrite':
-                                    try:
-                                        # Capture todo updates for frontend streaming
-                                        result_content = getattr(block, 'content', None)
-                                        if result_content:
-                                            import json
-                                            if isinstance(result_content, str):
-                                                todo_data = json.loads(result_content)
-                                            else:
-                                                todo_data = result_content
-
-                                            # Stream to frontend via task_streaming.py
-                                            from app.work.task_streaming import emit_task_update
-                                            emit_task_update(self.work_ticket_id, {
-                                                "type": "todo_update",
-                                                "todos": todo_data,
-                                                "source": "agent"
-                                            })
-                                            logger.info(f"Todo update: {len(todo_data.get('todos', []))} items")
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse todo update: {e}", exc_info=True)
-
-                # Log iteration completion summary
-                logger.info(f"[REPORTING-RECIPE] Iteration complete: {message_count} messages, {len(work_outputs)} outputs, {len(response_text)} chars response text")
+                # Process stream using shared utility (handles TodoWrite streaming + work output capture)
+                stream_result = await process_sdk_stream(
+                    client,
+                    work_ticket_id=self.work_ticket_id,
+                    agent_type="reporting-recipe"
+                )
 
                 # Get session ID from client
                 new_session_id = getattr(client, 'session_id', None)
@@ -853,15 +700,21 @@ Execute this recipe and emit work_output with validation metadata using the emit
 
         except Exception as e:
             logger.error(f"Recipe execution failed: {e}")
+            # Emit failure status to frontend
+            emit_completion_status(self.work_ticket_id, "failed")
             raise
 
+        # Emit completion status to frontend
+        emit_completion_status(self.work_ticket_id, "completed")
+
         # 4. Validate outputs against recipe output_specification
-        validation_results = self._validate_recipe_outputs(work_outputs, output_spec)
+        validation_results = self._validate_recipe_outputs(stream_result.work_outputs, output_spec)
 
         # Log results
         logger.info(
-            f"Recipe execution produced {len(work_outputs)} structured outputs: "
-            f"{[o.output_type for o in work_outputs]}"
+            f"Recipe execution produced {len(stream_result.work_outputs)} structured outputs, "
+            f"{len(stream_result.tool_calls)} tool calls, "
+            f"{len(stream_result.final_todos)} final todos"
         )
 
         # Update agent session with new claude_session_id
@@ -874,12 +727,14 @@ Execute this recipe and emit work_output with validation metadata using the emit
         execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
 
         return {
-            "output_count": len(work_outputs),
-            "work_outputs": [o.to_dict() for o in work_outputs],
+            "output_count": len(stream_result.work_outputs),
+            "work_outputs": stream_result.work_outputs,  # Already dicts from stream processor
             "validation_results": validation_results,
             "claude_session_id": new_session_id,
             "execution_time_ms": execution_time_ms,
-            "response_text": response_text,  # For debugging
+            "response_text": stream_result.response_text,
+            "final_todos": stream_result.final_todos,  # For work ticket metadata
+            "tool_calls": stream_result.tool_calls,  # For debugging/logging
         }
 
     def _validate_recipe_outputs(
@@ -891,7 +746,7 @@ Execute this recipe and emit work_output with validation metadata using the emit
         Validate outputs against recipe output specification.
 
         Args:
-            outputs: List of WorkOutput objects
+            outputs: List of work output dicts (from stream processor)
             output_spec: Recipe output specification with format, required_sections, validation_rules
 
         Returns:
