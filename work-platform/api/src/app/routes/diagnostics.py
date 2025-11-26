@@ -603,15 +603,39 @@ async def test_emit_work_output():
     """
     from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
     from agents_sdk.shared_tools_mcp import create_shared_tools_server
+    from app.utils.supabase_client import supabase_admin_client as supabase
 
     print("[EMIT TEST] Starting...", flush=True)
 
     try:
-        # Create MCP server with test context
+        # Step 1: Get real basket_id and work_ticket_id from production
+        # (required for emit_work_output to succeed with database FK constraints)
+        print("[EMIT TEST] Fetching production basket and work_ticket...", flush=True)
+
+        production_basket_id = "4eccb9a0-9fe4-4660-861e-b80a75a20824"
+
+        # Get existing work_ticket_id to satisfy FK constraint
+        work_ticket_result = supabase.table("work_tickets") \
+            .select("id") \
+            .eq("basket_id", production_basket_id) \
+            .limit(1) \
+            .execute()
+
+        if not work_ticket_result.data:
+            return {
+                "status": "error",
+                "error": "No work_tickets found in production basket",
+                "basket_id": production_basket_id
+            }
+
+        work_ticket_id = work_ticket_result.data[0]["id"]
+        print(f"[EMIT TEST] Using basket={production_basket_id}, work_ticket={work_ticket_id}", flush=True)
+
+        # Create MCP server with real production context
         print("[EMIT TEST] Creating MCP server...", flush=True)
         shared_tools_server = create_shared_tools_server(
-            basket_id="test-basket-123",
-            work_ticket_id="test-ticket-456",
+            basket_id=production_basket_id,
+            work_ticket_id=work_ticket_id,
             agent_type="reporting",
             user_jwt=None
         )
@@ -719,15 +743,39 @@ async def test_research_workflow():
     This validates end-to-end autonomous workflow without Skills dependency.
     """
     from agents_sdk.research_agent_sdk import ResearchAgentSDK
+    from app.utils.supabase_client import supabase_admin_client as supabase
 
     print("[RESEARCH TEST] Starting multi-step workflow test...", flush=True)
 
     try:
-        # Create research agent in standalone mode (no TP context needed)
+        # Step 1: Get real basket_id and work_ticket_id from production
+        # (required for emit_work_output to succeed with database FK constraints)
+        print("[RESEARCH TEST] Fetching production basket and work_ticket...", flush=True)
+
+        production_basket_id = "4eccb9a0-9fe4-4660-861e-b80a75a20824"
+
+        # Get existing work_ticket_id to satisfy FK constraint
+        work_ticket_result = supabase.table("work_tickets") \
+            .select("id") \
+            .eq("basket_id", production_basket_id) \
+            .limit(1) \
+            .execute()
+
+        if not work_ticket_result.data:
+            return {
+                "status": "error",
+                "error": "No work_tickets found in production basket",
+                "basket_id": production_basket_id
+            }
+
+        work_ticket_id = work_ticket_result.data[0]["id"]
+        print(f"[RESEARCH TEST] Using basket={production_basket_id}, work_ticket={work_ticket_id}", flush=True)
+
+        # Create research agent with real production IDs
         agent = ResearchAgentSDK(
-            basket_id="test-basket-research",
+            basket_id=production_basket_id,
             workspace_id="test-workspace",
-            work_ticket_id="test-ticket-research",
+            work_ticket_id=work_ticket_id,
             monitoring_domains=["anthropic.com", "openai.com"]
         )
 
