@@ -230,6 +230,169 @@ async def execute_research_workflow(
             f"work_ticket={work_ticket_id}"
         )
 
+        # ASYNC MODE: Return immediately with ticket_id (frontend will poll/stream for updates)
+        if request.async_execution:
+            logger.info(f"[RESEARCH WORKFLOW] Async mode: returning ticket_id immediately")
+
+            # Start execution in background thread
+            import threading
+            import asyncio as bg_asyncio
+
+            # Capture variables for closure
+            _basket_id = request.basket_id
+            _workspace_id = workspace_id
+            _user_id = user_id
+            _user_token = user_token
+            _work_request_id = work_request_id
+            _work_ticket_id = work_ticket_id
+            _task_description = request.task_description
+            _recipe = recipe
+            _execution_context = execution_context
+            _validated_params = validated_params
+            _research_session = research_session
+
+            def execute_in_background():
+                try:
+                    # Re-import inside thread to avoid context issues
+                    from app.utils.supabase_client import supabase_admin_client as bg_supabase
+                    from agents_sdk.research_agent_sdk import ResearchAgentSDK
+                    from agents_sdk.work_bundle import WorkBundle
+                    from adapters.substrate_adapter import SubstrateQueryAdapter
+                    import time
+
+                    # Update status to running
+                    bg_supabase.table("work_tickets").update({
+                        "status": "running",
+                        "started_at": "now()",
+                    }).eq("id", _work_ticket_id).execute()
+
+                    # Load prior work outputs
+                    prior_outputs_response = bg_supabase.table("work_outputs").select(
+                        "id, title, output_type, body, confidence, created_at"
+                    ).eq("basket_id", _basket_id).eq(
+                        "agent_type", "research"
+                    ).eq("supervision_status", "approved").order(
+                        "created_at", desc=True
+                    ).limit(50).execute()
+                    prior_work_outputs = prior_outputs_response.data or []
+
+                    # Load reference assets
+                    assets_response = bg_supabase.table("documents").select(
+                        "id, title, document_type, metadata"
+                    ).eq("basket_id", _basket_id).execute()
+                    reference_assets = assets_response.data or []
+
+                    # Create WorkBundle
+                    context_bundle = WorkBundle(
+                        work_request_id=_work_request_id,
+                        work_ticket_id=_work_ticket_id,
+                        basket_id=_basket_id,
+                        workspace_id=_workspace_id,
+                        user_id=_user_id,
+                        task=_task_description,
+                        agent_type="research",
+                        priority="medium",
+                        reference_assets=reference_assets,
+                        agent_config={},
+                    )
+
+                    # Create SubstrateQueryAdapter
+                    substrate_adapter = SubstrateQueryAdapter(
+                        basket_id=_basket_id,
+                        workspace_id=_workspace_id,
+                        user_token=_user_token,
+                        agent_type="research",
+                        work_ticket_id=_work_ticket_id,
+                    )
+
+                    # Initialize ResearchAgentSDK
+                    research_sdk = ResearchAgentSDK(
+                        basket_id=_basket_id,
+                        workspace_id=_workspace_id,
+                        work_ticket_id=_work_ticket_id,
+                        session=_research_session,
+                        substrate=substrate_adapter,
+                        bundle=context_bundle,
+                    )
+
+                    # Build enhanced prompt
+                    enhanced_task = _task_description
+                    if _execution_context:
+                        task_breakdown = _execution_context.get("task_breakdown", [])
+                        deliverable_intent = _execution_context.get("deliverable_intent", {})
+                        enhanced_task = f"""**Recipe: {_recipe.name}**
+
+**Deliverable Intent:**
+- Purpose: {deliverable_intent.get('purpose', 'Conduct research')}
+- Audience: {deliverable_intent.get('audience', 'Decision-makers')}
+- Outcome: {deliverable_intent.get('outcome', 'Structured findings')}
+
+**Task:** {_task_description}
+
+**Task Breakdown:**
+{chr(10).join([f"- {step}" for step in task_breakdown])}
+
+**Parameters:**
+- Research Scope: {_validated_params.get('research_scope', 'general') if _validated_params else 'general'}
+- Depth: {_validated_params.get('depth', 'standard') if _validated_params else 'standard'}
+- Focus Area: {_validated_params.get('focus_area', 'None specified') if _validated_params else 'None specified'}
+
+{_execution_context.get('system_prompt_additions', '')}
+"""
+                    elif prior_work_outputs:
+                        enhanced_task += "\n\n**Prior Research** (avoid duplication):\n"
+                        for output in prior_work_outputs[:5]:
+                            enhanced_task += f"- {output['title']} ({output['output_type']})\n"
+
+                    # Execute research
+                    start_time = time.time()
+                    result = bg_asyncio.run(research_sdk.deep_dive(
+                        topic=enhanced_task,
+                        claude_session_id=_research_session.claude_session_id,
+                    ))
+                    execution_time_ms = int((time.time() - start_time) * 1000)
+
+                    # Update to completed
+                    bg_supabase.table("work_tickets").update({
+                        "status": "completed",
+                        "completed_at": "now()",
+                        "metadata": {
+                            "workflow": "recipe_research" if _recipe else "deterministic_research",
+                            "execution_time_ms": execution_time_ms,
+                            "output_count": result.get("output_count", 0),
+                            "recipe_slug": _recipe.slug if _recipe else None,
+                            "final_todos": result.get("final_todos", []),
+                        },
+                    }).eq("id", _work_ticket_id).execute()
+
+                    logger.info(f"[RESEARCH WORKFLOW] Background execution complete: {result.get('output_count', 0)} outputs")
+
+                except Exception as e:
+                    logger.exception(f"[RESEARCH WORKFLOW] Background execution failed: {e}")
+                    try:
+                        from app.utils.supabase_client import supabase_admin_client as bg_supabase
+                        bg_supabase.table("work_tickets").update({
+                            "status": "failed",
+                            "completed_at": "now()",
+                            "error_message": str(e),
+                        }).eq("id", _work_ticket_id).execute()
+                    except:
+                        pass
+
+            thread = threading.Thread(target=execute_in_background, daemon=True)
+            thread.start()
+
+            return ResearchWorkflowResponse(
+                work_request_id=work_request_id,
+                work_ticket_id=work_ticket_id,
+                agent_session_id=research_session.id,
+                status="running",
+                outputs=[],
+                execution_time_ms=None,
+                message="Research started in background - track progress via SSE stream",
+                recipe_used=recipe.slug if recipe else None,
+            )
+
         # Step 6: Create WorkBundle (metadata only) + SubstrateQueryAdapter (on-demand)
         logger.info(f"[RESEARCH WORKFLOW] Creating context for basket {request.basket_id}")
 
