@@ -164,7 +164,8 @@ async def test_skill_invocation():
     from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
     import asyncio
 
-    logger.info("[SKILL TEST] Starting minimal Skill tool test")
+    # Use print for visibility (logger.info may be filtered)
+    print("[SKILL TEST] Starting minimal Skill tool test", flush=True)
 
     try:
         # Create minimal options with ONLY Skill tool
@@ -191,33 +192,41 @@ DO NOT just describe what you would create - actually USE the Skill tool to crea
         tool_calls = []
         response_text = ""
         skill_invoked = False
+        message_count = 0
 
         # Create SDK client and test
+        print("[SKILL TEST] Creating SDK client...", flush=True)
         async with ClaudeSDKClient(options=options) as client:
+            print("[SKILL TEST] Connecting to SDK...", flush=True)
             await client.connect()
 
             # Simple test prompt
             test_prompt = "Create a simple 2-slide PowerPoint presentation about testing. Slide 1: Title 'Test Presentation'. Slide 2: Content 'This is a test'."
 
-            logger.info(f"[SKILL TEST] Sending prompt: {test_prompt}")
+            print(f"[SKILL TEST] Sending prompt: {test_prompt[:100]}...", flush=True)
             await client.query(test_prompt)
 
             # Collect responses
+            print("[SKILL TEST] Starting to iterate over responses...", flush=True)
             async for message in client.receive_response():
-                logger.info(f"[SKILL TEST] Message type: {type(message).__name__}")
+                message_count += 1
+                print(f"[SKILL TEST] Message #{message_count}: type={type(message).__name__}", flush=True)
 
                 if hasattr(message, 'content') and isinstance(message.content, list):
-                    for block in message.content:
+                    print(f"[SKILL TEST] Processing {len(message.content)} content blocks", flush=True)
+                    for idx, block in enumerate(message.content):
                         if not hasattr(block, 'type'):
+                            print(f"[SKILL TEST] Block #{idx} missing type", flush=True)
                             continue
 
                         block_type = block.type
-                        logger.info(f"[SKILL TEST] Block type: {block_type}")
+                        print(f"[SKILL TEST] Block #{idx}: type={block_type}", flush=True)
 
                         # Track text
                         if block_type == 'text' and hasattr(block, 'text'):
+                            text_preview = block.text[:100] if block.text else ""
                             response_text += block.text
-                            logger.info(f"[SKILL TEST] Text block: {block.text[:100]}")
+                            print(f"[SKILL TEST] Text block: {text_preview}...", flush=True)
 
                         # Track tool uses
                         elif block_type == 'tool_use':
@@ -227,16 +236,20 @@ DO NOT just describe what you would create - actually USE the Skill tool to crea
                                 "tool": tool_name,
                                 "input": str(tool_input)[:200]  # Truncate for safety
                             })
-                            logger.info(f"[SKILL TEST] Tool use: {tool_name}")
+                            print(f"[SKILL TEST] Tool use: {tool_name}", flush=True)
 
                             if tool_name == "Skill":
                                 skill_invoked = True
-                                logger.info(f"[SKILL TEST] ✅ Skill tool was invoked!")
+                                print(f"[SKILL TEST] ✅ Skill tool was invoked!", flush=True)
 
                         # Track tool results
                         elif block_type == 'tool_result':
                             tool_name = getattr(block, 'tool_name', 'unknown')
-                            logger.info(f"[SKILL TEST] Tool result from: {tool_name}")
+                            print(f"[SKILL TEST] Tool result from: {tool_name}", flush=True)
+                else:
+                    print(f"[SKILL TEST] Message has no content or content is not a list", flush=True)
+
+            print(f"[SKILL TEST] Iteration complete: {message_count} messages received", flush=True)
 
         result = {
             "status": "success",
@@ -249,14 +262,14 @@ DO NOT just describe what you would create - actually USE the Skill tool to crea
         }
 
         if skill_invoked:
-            logger.info("[SKILL TEST] ✅ SUCCESS: Skill tool was invoked")
+            print("[SKILL TEST] ✅ SUCCESS: Skill tool was invoked", flush=True)
         else:
-            logger.warning(f"[SKILL TEST] ⚠️ WARNING: Skill tool was NOT invoked. Agent called: {tool_calls}")
+            print(f"[SKILL TEST] ⚠️ WARNING: Skill tool was NOT invoked. Agent called: {tool_calls}", flush=True)
 
         return result
 
     except Exception as e:
-        logger.error(f"[SKILL TEST] Failed: {e}", exc_info=True)
+        print(f"[SKILL TEST] ❌ FAILED with exception: {e}", flush=True)
         import traceback
         return {
             "status": "error",
