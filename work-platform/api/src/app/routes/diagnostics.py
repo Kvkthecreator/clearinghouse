@@ -704,3 +704,134 @@ DO NOT just write content - you MUST also save it using emit_work_output.""",
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+@router.post("/test-research-workflow")
+async def test_research_workflow():
+    """
+    Phase 4: Multi-Step Research Agent Workflow
+
+    Tests the research agent's ability to:
+    1. Use web_search tool for information gathering
+    2. Generate text-based analysis
+    3. Use emit_work_output to save findings
+
+    This validates end-to-end autonomous workflow without Skills dependency.
+    """
+    from agents_sdk.research_agent_sdk import ResearchAgentSDK
+
+    print("[RESEARCH TEST] Starting multi-step workflow test...", flush=True)
+
+    try:
+        # Create research agent in standalone mode (no TP context needed)
+        agent = ResearchAgentSDK(
+            basket_id="test-basket-research",
+            workspace_id="test-workspace",
+            work_ticket_id="test-ticket-research",
+            monitoring_domains=["anthropic.com", "openai.com"]
+        )
+
+        print("[RESEARCH TEST] Agent initialized", flush=True)
+
+        # Simple research task that should trigger:
+        # 1. Web search
+        # 2. Analysis/synthesis
+        # 3. emit_work_output
+        query = "What are the latest Claude AI model capabilities as of 2025?"
+
+        print(f"[RESEARCH TEST] Executing query: {query}", flush=True)
+
+        # Track what happens
+        tool_calls = []
+        web_search_used = False
+        emit_used = False
+        response_text = ""
+
+        # Execute research (this will use deep_dive method internally)
+        from claude_agent_sdk import ClaudeSDKClient
+
+        async with ClaudeSDKClient(options=agent._options) as client:
+            await client.connect()
+            print("[RESEARCH TEST] SDK client connected", flush=True)
+
+            await client.query(f"""Research and analyze: {query}
+
+WORKFLOW:
+1. Use web_search to find recent information
+2. Synthesize your findings
+3. Use emit_work_output to save a research finding
+
+Output structure:
+- output_type: "finding"
+- title: Brief title of your finding
+- body: {{"summary": "...", "details": "...", "sources": [...]}}
+- confidence: 0.0-1.0
+- source_block_ids: []""")
+
+            print("[RESEARCH TEST] Query sent, iterating responses...", flush=True)
+
+            async for message in client.receive_response():
+                print(f"[RESEARCH TEST] Message type: {type(message).__name__}", flush=True)
+
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    print(f"[RESEARCH TEST] Processing {len(message.content)} blocks", flush=True)
+
+                    for idx, block in enumerate(message.content):
+                        # Text blocks
+                        if hasattr(block, 'text'):
+                            text_preview = block.text[:100] if len(block.text) > 100 else block.text
+                            response_text += block.text
+                            print(f"[RESEARCH TEST] Block {idx}: Text ({len(block.text)} chars) - {text_preview}...", flush=True)
+
+                        # Tool invocations
+                        if hasattr(block, 'name'):
+                            tool_name = block.name
+                            tool_input = block.input if hasattr(block, 'input') else {}
+
+                            tool_calls.append({
+                                "tool": tool_name,
+                                "input": str(tool_input)[:200]
+                            })
+
+                            print(f"[RESEARCH TEST] Block {idx}: Tool call - {tool_name}", flush=True)
+
+                            if tool_name == "web_search":
+                                web_search_used = True
+                                print(f"[RESEARCH TEST] ✅ web_search invoked", flush=True)
+                            elif tool_name == "mcp__shared_tools__emit_work_output":
+                                emit_used = True
+                                print(f"[RESEARCH TEST] ✅ emit_work_output invoked", flush=True)
+
+        print("[RESEARCH TEST] Response iteration complete", flush=True)
+
+        result = {
+            "status": "success",
+            "query": query,
+            "tool_calls": tool_calls,
+            "web_search_used": web_search_used,
+            "emit_work_output_used": emit_used,
+            "response_text": response_text[:500] if response_text else "(no text)",
+            "response_length": len(response_text),
+            "tool_count": len(tool_calls)
+        }
+
+        # Summary
+        if web_search_used and emit_used:
+            print("[RESEARCH TEST] ✅ SUCCESS: Complete workflow validated", flush=True)
+        elif web_search_used:
+            print("[RESEARCH TEST] ⚠️ PARTIAL: web_search worked but emit_work_output not invoked", flush=True)
+        elif emit_used:
+            print("[RESEARCH TEST] ⚠️ PARTIAL: emit_work_output worked but web_search not invoked", flush=True)
+        else:
+            print(f"[RESEARCH TEST] ❌ FAILED: Neither tool invoked. Tools called: {[tc['tool'] for tc in tool_calls]}", flush=True)
+
+        return result
+
+    except Exception as e:
+        print(f"[RESEARCH TEST] ❌ FAILED: {e}", flush=True)
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
