@@ -342,6 +342,9 @@ class SubstrateClient:
             params["limit"] = limit
 
         response = self._request("GET", f"/api/baskets/{basket_id}/blocks", params=params)
+        # Handle both list response and {"blocks": [...]} response formats
+        if isinstance(response, list):
+            return response
         return response.get("blocks", [])
 
     # ========================================================================
