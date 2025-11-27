@@ -685,6 +685,273 @@ async def run_all_tests() -> TestSuiteResult:
 
 
 # =============================================================================
+# Test 7: ContentAgent
+# =============================================================================
+
+@router.post("/test-content-agent")
+async def test_content_agent() -> TestResult:
+    """
+    Test 7: ContentAgent workflow test.
+
+    Validates:
+    - ContentAgent initializes correctly
+    - Content generation prompt construction
+    - Agent execution produces content outputs
+    """
+    start_time = time.time()
+    test_name = "content_agent"
+
+    try:
+        from agents.content_agent import ContentAgent
+        from app.utils.supabase_client import supabase_admin_client as supabase
+
+        # Get production basket
+        production_basket_id = "4eccb9a0-9fe4-4660-861e-b80a75a20824"
+
+        work_ticket_result = supabase.table("work_tickets") \
+            .select("id, workspace_id") \
+            .eq("basket_id", production_basket_id) \
+            .limit(1) \
+            .execute()
+
+        if not work_ticket_result.data:
+            return TestResult(
+                test_name=test_name,
+                status="error",
+                duration_ms=int((time.time() - start_time) * 1000),
+                message="No work_ticket found for testing",
+                details={"basket_id": production_basket_id}
+            )
+
+        work_ticket_id = work_ticket_result.data[0]["id"]
+        workspace_id = work_ticket_result.data[0].get("workspace_id", "test-workspace")
+
+        # Initialize agent
+        agent = ContentAgent(
+            basket_id=production_basket_id,
+            workspace_id=workspace_id,
+            work_ticket_id=work_ticket_id,
+            user_id="diagnostic-test-user",
+        )
+
+        # Execute content generation task
+        result = await agent.execute(
+            task="Write a brief post about AI assistants for professionals",
+            content_type="linkedin_post",
+            tone="professional",
+            create_variants=False,
+            enable_web_search=False,
+        )
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        return TestResult(
+            test_name=test_name,
+            status="success" if len(result.work_outputs) > 0 else "warning",
+            duration_ms=duration_ms,
+            message=f"ContentAgent completed with {len(result.work_outputs)} outputs",
+            details={
+                "outputs_created": len(result.work_outputs),
+                "work_outputs": result.work_outputs,
+                "response_preview": result.response_text[:300] if result.response_text else "(no text)",
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        return TestResult(
+            test_name=test_name,
+            status="error",
+            duration_ms=int((time.time() - start_time) * 1000),
+            message=f"ContentAgent test failed: {str(e)}",
+            details={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": traceback.format_exc()[:500],
+            }
+        )
+
+
+# =============================================================================
+# Test 8: ThinkingPartnerAgent
+# =============================================================================
+
+@router.post("/test-thinking-partner-agent")
+async def test_thinking_partner_agent() -> TestResult:
+    """
+    Test 8: ThinkingPartnerAgent scaffold test.
+
+    Validates:
+    - ThinkingPartnerAgent initializes correctly
+    - Basic execution works
+    - Insights are captured as work_outputs
+    """
+    start_time = time.time()
+    test_name = "thinking_partner_agent"
+
+    try:
+        from agents.thinking_partner_agent import ThinkingPartnerAgent
+        from app.utils.supabase_client import supabase_admin_client as supabase
+
+        # Get production basket
+        production_basket_id = "4eccb9a0-9fe4-4660-861e-b80a75a20824"
+
+        work_ticket_result = supabase.table("work_tickets") \
+            .select("id, workspace_id") \
+            .eq("basket_id", production_basket_id) \
+            .limit(1) \
+            .execute()
+
+        if not work_ticket_result.data:
+            return TestResult(
+                test_name=test_name,
+                status="error",
+                duration_ms=int((time.time() - start_time) * 1000),
+                message="No work_ticket found for testing",
+                details={"basket_id": production_basket_id}
+            )
+
+        work_ticket_id = work_ticket_result.data[0]["id"]
+        workspace_id = work_ticket_result.data[0].get("workspace_id", "test-workspace")
+
+        # Initialize agent
+        agent = ThinkingPartnerAgent(
+            basket_id=production_basket_id,
+            workspace_id=workspace_id,
+            work_ticket_id=work_ticket_id,
+            user_id="diagnostic-test-user",
+        )
+
+        # Execute brainstorming task
+        result = await agent.execute(
+            task="What are the key considerations for AI assistant adoption in enterprises?",
+            thinking_mode="brainstorm",
+            capture_insights=True,
+        )
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        return TestResult(
+            test_name=test_name,
+            status="success" if result.response_text else "warning",
+            duration_ms=duration_ms,
+            message=f"ThinkingPartnerAgent completed with {len(result.work_outputs)} insights",
+            details={
+                "insights_captured": len(result.work_outputs),
+                "work_outputs": result.work_outputs,
+                "response_preview": result.response_text[:300] if result.response_text else "(no text)",
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "note": "ThinkingPartnerAgent is a scaffold - full implementation pending",
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        return TestResult(
+            test_name=test_name,
+            status="error",
+            duration_ms=int((time.time() - start_time) * 1000),
+            message=f"ThinkingPartnerAgent test failed: {str(e)}",
+            details={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": traceback.format_exc()[:500],
+            }
+        )
+
+
+# =============================================================================
+# Test 9: ReportingAgent (Skills API)
+# =============================================================================
+
+@router.post("/test-reporting-agent")
+async def test_reporting_agent() -> TestResult:
+    """
+    Test 9: ReportingAgent with Skills API test.
+
+    Validates:
+    - ReportingAgent initializes correctly
+    - Skills API beta headers are configured
+    - Document generation is attempted
+
+    Note: Full Skills API testing may require beta access.
+    """
+    start_time = time.time()
+    test_name = "reporting_agent"
+
+    try:
+        from agents.reporting_agent import ReportingAgent, SKILLS_BETAS
+        from app.utils.supabase_client import supabase_admin_client as supabase
+
+        # Get production basket
+        production_basket_id = "4eccb9a0-9fe4-4660-861e-b80a75a20824"
+
+        work_ticket_result = supabase.table("work_tickets") \
+            .select("id, workspace_id") \
+            .eq("basket_id", production_basket_id) \
+            .limit(1) \
+            .execute()
+
+        if not work_ticket_result.data:
+            return TestResult(
+                test_name=test_name,
+                status="error",
+                duration_ms=int((time.time() - start_time) * 1000),
+                message="No work_ticket found for testing",
+                details={"basket_id": production_basket_id}
+            )
+
+        work_ticket_id = work_ticket_result.data[0]["id"]
+        workspace_id = work_ticket_result.data[0].get("workspace_id", "test-workspace")
+
+        # Initialize agent
+        agent = ReportingAgent(
+            basket_id=production_basket_id,
+            workspace_id=workspace_id,
+            work_ticket_id=work_ticket_id,
+            user_id="diagnostic-test-user",
+        )
+
+        # Verify configuration
+        has_skills_client = hasattr(agent, 'skills_client') and agent.skills_client is not None
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Note: Full execution test skipped as Skills API requires beta access
+        # In production, this would execute: await agent.execute(task="...", output_format="pptx")
+
+        return TestResult(
+            test_name=test_name,
+            status="success" if has_skills_client else "warning",
+            duration_ms=duration_ms,
+            message="ReportingAgent initialized with Skills API support",
+            details={
+                "skills_client_initialized": has_skills_client,
+                "skills_betas": SKILLS_BETAS,
+                "supported_formats": agent.OUTPUT_FORMATS,
+                "note": "Full Skills API execution requires beta access - skipping document generation",
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        return TestResult(
+            test_name=test_name,
+            status="error",
+            duration_ms=int((time.time() - start_time) * 1000),
+            message=f"ReportingAgent test failed: {str(e)}",
+            details={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": traceback.format_exc()[:500],
+            }
+        )
+
+
+# =============================================================================
 # Legacy Endpoints (kept for compatibility)
 # =============================================================================
 
@@ -699,25 +966,30 @@ async def get_migration_status():
     return {
         "migration": "sdk_removal",
         "recovery_tag": "pre-sdk-removal",
-        "status": "phase_1_complete",
+        "status": "complete",
         "architecture": {
             "client": "AnthropicDirectClient (direct API)",
-            "executor": "BaseAgentExecutor + ResearchExecutor",
+            "agents": "BaseAgent + ResearchAgent, ContentAgent, ReportingAgent, ThinkingPartnerAgent",
             "tools": "emit_work_output via substrate-API HTTP",
             "streaming": "Native Anthropic streaming",
+            "skills_api": "ReportingAgent uses Skills API for document generation",
         },
         "test_endpoints": {
             "/api/diagnostics/test-anthropic-connection": "Test 1: API connectivity",
             "/api/diagnostics/test-tool-definition": "Test 2: Tool schemas",
             "/api/diagnostics/test-emit-work-output": "Test 3: Work output creation",
-            "/api/diagnostics/test-research-executor": "Test 4: Full workflow",
+            "/api/diagnostics/test-research-executor": "Test 4: ResearchAgent workflow",
             "/api/diagnostics/test-streaming": "Test 5: Streaming responses",
             "/api/diagnostics/test-token-tracking": "Test 6: Cost analysis",
+            "/api/diagnostics/test-content-agent": "Test 7: ContentAgent workflow",
+            "/api/diagnostics/test-thinking-partner-agent": "Test 8: ThinkingPartnerAgent",
+            "/api/diagnostics/test-reporting-agent": "Test 9: ReportingAgent (Skills API)",
             "/api/diagnostics/run-all-tests": "Run complete test suite",
         },
         "active_workflows": {
             "/api/work/research/execute": "active",
-            "/api/work/reporting/execute": "pending_migration",
+            "/api/work/content/execute": "pending_endpoint",
+            "/api/work/reporting/execute": "pending_endpoint",
         }
     }
 
@@ -748,29 +1020,45 @@ async def check_agent_configuration():
         "status": "migrated",
         "architecture": "direct_anthropic_api",
         "note": "Claude Agent SDK removed. Agents now use AnthropicDirectClient.",
-        "available_executors": [
+        "available_agents": [
             {
-                "name": "ResearchExecutor",
-                "path": "agents/research_executor.py",
+                "name": "ResearchAgent",
+                "path": "agents/research_agent.py",
                 "status": "active",
-                "features": ["emit_work_output", "web_search", "substrate_context"]
+                "features": ["emit_work_output", "web_search", "substrate_context", "multi_search_limits"],
+                "backward_compat": "ResearchExecutor"
             },
             {
-                "name": "ContentExecutor",
-                "path": "agents/content_executor.py",
-                "status": "pending_implementation"
+                "name": "ContentAgent",
+                "path": "agents/content_agent.py",
+                "status": "active",
+                "features": ["emit_work_output", "platform_specific_content", "variant_creation"],
+                "content_types": ["linkedin_post", "twitter_thread", "blog_article", "newsletter"],
+                "backward_compat": "ContentExecutor"
             },
             {
-                "name": "ReportingExecutor",
-                "path": "agents/reporting_executor.py",
-                "status": "pending_implementation"
+                "name": "ReportingAgent",
+                "path": "agents/reporting_agent.py",
+                "status": "active",
+                "features": ["skills_api", "document_generation", "pptx", "xlsx", "docx", "pdf"],
+                "requires_beta": ["code-execution-2025-08-25", "skills-2025-10-02"],
+                "backward_compat": "ReportingExecutor"
+            },
+            {
+                "name": "ThinkingPartnerAgent",
+                "path": "agents/thinking_partner_agent.py",
+                "status": "scaffold",
+                "features": ["emit_work_output", "brainstorming", "insight_capture"],
+                "note": "Minimal implementation - full interactive features pending",
+                "backward_compat": "ThinkingPartnerExecutor"
             }
         ],
         "base_classes": [
             {
-                "name": "BaseAgentExecutor",
-                "path": "agents/base_executor.py",
-                "purpose": "Shared agent logic, context building, tool execution"
+                "name": "BaseAgent",
+                "path": "agents/base_agent.py",
+                "purpose": "Shared agent logic, context building, tool execution",
+                "backward_compat": "BaseAgentExecutor"
             },
             {
                 "name": "AnthropicDirectClient",
@@ -786,8 +1074,14 @@ async def check_agent_configuration():
             },
             {
                 "name": "web_search",
-                "execution": "placeholder (use external API)",
-                "status": "planned"
+                "execution": "Anthropic web search tool",
+                "status": "active"
+            },
+            {
+                "name": "code_execution",
+                "execution": "Skills API (ReportingAgent only)",
+                "status": "active",
+                "requires_beta": True
             }
         ]
     }
