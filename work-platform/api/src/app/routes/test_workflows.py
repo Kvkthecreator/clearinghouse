@@ -4,6 +4,8 @@ Test Workflows Endpoint - For E2E Testing Without JWT Complexity
 Uses service-to-service authentication (X-Test-User-ID header) instead of JWT.
 Bypasses Supabase JWT complexity for programmatic testing.
 
+NOTE: Post-SDK removal, test workflows use the new ResearchExecutor.
+
 Usage:
     curl -X POST http://localhost:10000/api/test/workflows/research \
       -H "X-Test-User-ID: uuid" \
@@ -12,14 +14,12 @@ Usage:
 """
 
 import logging
+import time
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 from app.utils.supabase_client import supabase_admin_client as supabase
-from agents_sdk.research_agent_sdk import ResearchAgentSDK
-from agents_sdk.work_bundle import WorkBundle
-from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,6 @@ class TestResearchResponse(BaseModel):
     success: bool
     work_request_id: str
     work_ticket_id: str
-    agent_session_id: str
     status: str
     outputs: list[dict]
     execution_time_ms: Optional[int]
@@ -57,6 +56,8 @@ async def test_research_workflow(
 
     Uses X-Test-User-ID header for user identification instead of JWT.
     This allows E2E testing without Supabase authentication complexity.
+
+    Post-SDK: Uses ResearchExecutor with direct Anthropic API.
 
     Args:
         request: Research workflow parameters
@@ -89,17 +90,7 @@ async def test_research_workflow(
 
         logger.info(f"[TEST] Basket found: {basket['name']} in workspace {workspace_id}")
 
-        # Step 2: Get or create research agent session
-        research_session = await AgentSession.get_or_create(
-            basket_id=request.basket_id,
-            workspace_id=workspace_id,
-            agent_type="research",
-            user_id=x_test_user_id,
-        )
-
-        logger.info(f"[TEST] Agent session: {research_session.id}")
-
-        # Step 3: Create work_request
+        # Step 2: Create work_request
         work_request_data = {
             "workspace_id": workspace_id,
             "basket_id": request.basket_id,
@@ -118,10 +109,9 @@ async def test_research_workflow(
         ).execute()
         work_request_id = work_request_response.data[0]["id"]
 
-        # Step 4: Create work_ticket
+        # Step 3: Create work_ticket
         work_ticket_data = {
             "work_request_id": work_request_id,
-            "agent_session_id": research_session.id,
             "workspace_id": workspace_id,
             "basket_id": request.basket_id,
             "agent_type": "research",
@@ -141,81 +131,45 @@ async def test_research_workflow(
             f"work_ticket={work_ticket_id}"
         )
 
-        # Step 5: Load context (WorkBundle pattern - metadata only, substrate queried on-demand)
-        assets_response = supabase.table("documents").select(
-            "id, title, document_type, metadata"
-        ).eq("basket_id", request.basket_id).execute()
-
-        reference_assets = assets_response.data or []
-
-        # Create WorkBundle (metadata only - substrate queried on-demand via adapter)
-        context_bundle = WorkBundle(
-            work_request_id=work_request_id,
-            work_ticket_id=work_ticket_id,
-            basket_id=request.basket_id,
-            workspace_id=workspace_id,
-            user_id=x_test_user_id,
-            task=request.task_description,
-            agent_type="research",
-            priority="medium",
-            reference_assets=reference_assets,
-            agent_config={},  # Use defaults for testing
-        )
-
-        # Create SubstrateQueryAdapter for on-demand substrate access
-        from adapters.substrate_adapter import SubstrateQueryAdapter
-        substrate_adapter = SubstrateQueryAdapter(
-            basket_id=request.basket_id,
-            workspace_id=workspace_id,
-            agent_type="research",
-            work_ticket_id=work_ticket_id,
-        )
-
-        logger.info(
-            f"[TEST] WorkBundle: {len(reference_assets)} assets (substrate queried on-demand)"
-        )
-
-        # Step 6: Update work_ticket to running
+        # Step 4: Update work_ticket to running
         supabase.table("work_tickets").update({
             "status": "running",
-            "started_at": "now()",
         }).eq("id", work_ticket_id).execute()
 
-        # Step 7: Execute ResearchAgentSDK
-        logger.info(f"[TEST] Executing ResearchAgentSDK...")
+        # Step 5: Execute ResearchExecutor (new pattern, no SDK)
+        logger.info("[TEST] Executing ResearchExecutor (direct Anthropic API)...")
 
-        research_sdk = ResearchAgentSDK(
+        from agents.research_executor import ResearchExecutor
+
+        executor = ResearchExecutor(
             basket_id=request.basket_id,
             workspace_id=workspace_id,
             work_ticket_id=work_ticket_id,
-            session=research_session,
-            substrate=substrate_adapter,
-            bundle=context_bundle,
+            user_id=x_test_user_id,
         )
 
-        import time
         start_time = time.time()
 
-        result = await research_sdk.deep_dive(
-            topic=request.task_description,
-            claude_session_id=research_session.claude_session_id,
+        result = await executor.execute(
+            task=request.task_description,
+            research_scope=request.research_scope,
+            depth=request.depth,
         )
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 
-        # Step 8: Update work_ticket to completed
+        # Step 6: Update work_ticket to completed
         supabase.table("work_tickets").update({
             "status": "completed",
-            "completed_at": "now()",
             "metadata": {
                 "execution_time_ms": execution_time_ms,
-                "output_count": result["output_count"],
+                "output_count": len(result.work_outputs),
                 "test_mode": True,
             },
         }).eq("id", work_ticket_id).execute()
 
         logger.info(
-            f"[TEST] Execution complete: {result['output_count']} outputs "
+            f"[TEST] Execution complete: {len(result.work_outputs)} outputs "
             f"in {execution_time_ms}ms"
         )
 
@@ -223,11 +177,10 @@ async def test_research_workflow(
             success=True,
             work_request_id=work_request_id,
             work_ticket_id=work_ticket_id,
-            agent_session_id=research_session.id,
             status="completed",
-            outputs=result["work_outputs"],
+            outputs=result.work_outputs,
             execution_time_ms=execution_time_ms,
-            message=f"Test successful: {result['output_count']} outputs generated",
+            message=f"Test successful: {len(result.work_outputs)} outputs generated",
             test_mode=True,
         )
 
@@ -241,7 +194,6 @@ async def test_research_workflow(
             try:
                 supabase.table("work_tickets").update({
                     "status": "failed",
-                    "completed_at": "now()",
                     "metadata": {
                         "error": str(e),
                         "error_type": type(e).__name__,
@@ -267,4 +219,6 @@ async def test_health():
     return {
         "status": "ok",
         "message": "Test endpoints available",
+        "sdk_status": "removed",
+        "executor": "ResearchExecutor (direct Anthropic API)",
     }
