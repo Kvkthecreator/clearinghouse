@@ -4,7 +4,6 @@
  */
 
 import {
-  MessageSquare,
   Layers,
   Clock,
   Settings,
@@ -21,13 +20,6 @@ export type ProjectSection = {
 };
 
 export const PROJECT_SECTIONS: ProjectSection[] = [
-  {
-    key: "chat",
-    label: "Chat",
-    icon: MessageSquare,
-    href: (id) => `/projects/${id}`,
-    description: "Thinking Partner - orchestrate research, content, and reports",
-  },
   {
     key: "overview",
     label: "Overview",

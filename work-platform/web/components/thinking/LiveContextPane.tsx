@@ -149,7 +149,7 @@ function IdleView({ basketId }: { basketId: string }) {
       <div className="space-y-3 rounded-lg border border-border bg-card p-4">
         <h4 className="text-sm font-medium text-foreground">Recent Activity</h4>
         <p className="text-xs text-muted-foreground">
-          No recent activity. Start chatting to create work requests.
+          No recent activity. Start a Thinking Partner session to create work requests.
         </p>
       </div>
     </div>
@@ -286,7 +286,7 @@ function ReviewingView() {
           Work Outputs Generated
         </h4>
         <p className="text-sm text-muted-foreground">
-          Check the chat interface for detailed work outputs
+          Check the Thinking Partner pane for detailed work outputs
         </p>
       </div>
     </div>

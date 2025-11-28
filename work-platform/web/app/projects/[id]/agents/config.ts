@@ -1,6 +1,6 @@
-import { Brain, PenSquare, BarChart3, type LucideIcon } from 'lucide-react';
+import { Brain, PenSquare, BarChart3, MessageSquare, type LucideIcon } from 'lucide-react';
 
-export type AgentType = 'research' | 'content' | 'reporting';
+export type AgentType = 'thinking' | 'research' | 'content' | 'reporting';
 
 export type AgentConfig = {
   label: string;
@@ -9,6 +9,11 @@ export type AgentConfig = {
 };
 
 export const AGENT_CONFIG: Record<AgentType, AgentConfig> = {
+  thinking: {
+    label: 'Thinking Partner',
+    description: 'Conversational agent for orchestration, triage, and live context navigation.',
+    icon: MessageSquare,
+  },
   research: {
     label: 'Research Agent',
     description: 'Monitors markets, competitors, and signals with autonomous sweeps.',

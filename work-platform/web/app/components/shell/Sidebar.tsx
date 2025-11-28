@@ -38,6 +38,11 @@ const GLOBAL_LINKS = [
 
 const AGENT_LINKS = [
   {
+    key: 'thinking',
+    label: 'Thinking Partner',
+    icon: MessageSquare,
+  },
+  {
     key: 'research',
     label: 'Research Agent',
     icon: Brain,
@@ -165,7 +170,6 @@ export default function Sidebar({ className }: SidebarProps) {
 
   // Map section keys to icons
   const sectionIcons: Record<string, React.ElementType> = {
-    chat: MessageSquare,
     overview: LayoutDashboard,
     context: Layers,
     "work-tickets": Briefcase,

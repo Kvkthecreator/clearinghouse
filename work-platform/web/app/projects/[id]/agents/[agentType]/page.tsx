@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { createServerComponentClient } from '@/lib/supabase/clients';
 import { getAuthenticatedUser } from '@/lib/auth/getAuthenticatedUser';
 import AgentDashboardClient, { type AgentSession } from '../_components/AgentDashboardClient';
+import { ThinkingAgentClient } from '../_components/ThinkingAgentClient';
 import { isAgentType, type AgentType } from '../config';
 
 interface PageProps {
@@ -21,12 +22,22 @@ export default async function AgentPage({ params }: PageProps) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('id, name, status')
+    .select('id, name, status, basket_id, workspace_id')
     .eq('id', projectId)
     .maybeSingle();
 
   if (!project) {
     notFound();
+  }
+
+  if (agentType === 'thinking') {
+    return (
+      <ThinkingAgentClient
+        project={{ id: project.id, name: project.name }}
+        basketId={project.basket_id}
+        workspaceId={project.workspace_id}
+      />
+    );
   }
 
   const { data: agentRow } = await supabase
