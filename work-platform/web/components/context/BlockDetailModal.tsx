@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Database, X, Clock, Copy, Loader2 } from 'lucide-react';
+import { Database, Copy, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -263,7 +263,7 @@ export default function BlockDetailModal({
               </DialogTitle>
             </div>
             <div className="flex items-center gap-2">
-              {blockId && (
+{blockId && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -275,9 +275,6 @@ export default function BlockDetailModal({
                   <span className="text-xs">Copy ID</span>
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={onClose} title="Close modal">
-                <X className="h-4 w-4" />
-              </Button>
             </div>
           </div>
         </DialogHeader>
