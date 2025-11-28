@@ -40,7 +40,7 @@ from infra.utils.supabase_client import supabase_admin_client as supabase
 from contracts.basket import BasketDelta, BasketChangeRequest
 from services.clock import now_iso
 from services.universal_work_tracker import universal_work_tracker
-from infra.substrate.services.events import EventService
+from services.events import EventService
 
 logger = logging.getLogger("uvicorn.error")
 
