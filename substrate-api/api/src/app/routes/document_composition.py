@@ -22,7 +22,7 @@ from ..documents.services.lifecycle_management import DocumentLifecycleService
 from ..documents.services.coherence_analyzer import CoherenceAnalyzerService
 from ..agents.pipeline.presentation_agent import P4PresentationAgent
 from ..dependencies import get_current_user
-from infra.substrate.services.events import EventService
+from services.events import EventService
 
 logger = logging.getLogger("uvicorn.error")
 
