@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface CreateProjectDialogProps {
@@ -20,6 +20,8 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
   const [submitting, setSubmitting] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [description, setDescription] = useState('');
+  const [projectContext, setProjectContext] = useState('');
+  const [showContextInput, setShowContextInput] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -30,6 +32,8 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
   const resetState = () => {
     setProjectName('');
     setDescription('');
+    setProjectContext('');
+    setShowContextInput(false);
     setError(null);
     setSubmitting(false);
     setSuccess(false);
@@ -55,6 +59,7 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
         body: JSON.stringify({
           project_name: projectName.trim(),
           description: description.trim() || undefined,
+          project_context: projectContext.trim() || undefined,
         }),
       });
 
@@ -111,6 +116,46 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
                 maxLength={1000}
               />
             </FieldBlock>
+
+            {/* Collapsible rich context input */}
+            <div className="border-t pt-4">
+              <button
+                type="button"
+                onClick={() => setShowContextInput(!showContextInput)}
+                className="flex w-full items-center justify-between text-sm font-medium text-slate-700 hover:text-slate-900"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <span>Add project context for AI seeding</span>
+                  <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                </div>
+                {showContextInput ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+
+              {showContextInput && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Describe your project, target audience, problem being solved, or vision.
+                    AI will automatically generate foundational anchors from this context.
+                  </p>
+                  <Textarea
+                    placeholder="e.g., We're building a SaaS analytics platform for marketing teams. Main problem is they spend too much time on manual reporting. Target: mid-market B2B companies..."
+                    value={projectContext}
+                    onChange={(e) => setProjectContext(e.target.value)}
+                    rows={5}
+                    className="resize-none text-sm"
+                    maxLength={3000}
+                  />
+                  <p className="text-xs text-muted-foreground text-right">
+                    {projectContext.length}/3000
+                  </p>
+                </div>
+              )}
+            </div>
           </section>
 
           {error && (

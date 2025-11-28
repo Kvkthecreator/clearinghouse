@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@/lib/supabase/clients';
 
 const WORK_PLATFORM_API_URL = process.env.NEXT_PUBLIC_WORK_PLATFORM_API_URL || 'http://localhost:8000';
+const SUBSTRATE_API_URL = process.env.SUBSTRATE_API_URL || 'http://localhost:10000';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     const token = session.access_token;
 
     const body = await request.json();
-    const { project_name, description } = body;
+    const { project_name, description, project_context } = body;
 
     // Validate required fields
     if (!project_name || !project_name.trim()) {
@@ -35,7 +36,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Forward to work-platform backend (canonical auth pattern)
-    // Initial context is now set up via Context Templates after project creation
     const backendPayload = {
       project_name: project_name.trim(),
       initial_context: 'Project created - foundational context pending',
@@ -62,6 +62,34 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await backendResponse.json();
+
+    // If project_context provided, trigger anchor seeding (fire-and-forget)
+    // This generates foundational anchor blocks from the user's context
+    if (project_context?.trim() && result.basket_id) {
+      console.log(`[CREATE PROJECT API] Triggering anchor seeding for basket ${result.basket_id}`);
+
+      // Fire-and-forget - don't block project creation on seeding
+      fetch(`${SUBSTRATE_API_URL}/api/baskets/${result.basket_id}/seed-anchors`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          context: project_context.trim(),
+          project_name: project_name.trim(),
+        }),
+      }).then(res => {
+        if (res.ok) {
+          console.log(`[CREATE PROJECT API] Anchor seeding initiated for basket ${result.basket_id}`);
+        } else {
+          console.warn(`[CREATE PROJECT API] Anchor seeding failed for basket ${result.basket_id}: ${res.status}`);
+        }
+      }).catch(err => {
+        console.warn(`[CREATE PROJECT API] Anchor seeding error for basket ${result.basket_id}:`, err);
+      });
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     console.error('[CREATE PROJECT API] Error:', error);

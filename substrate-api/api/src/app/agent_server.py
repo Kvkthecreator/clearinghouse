@@ -77,6 +77,7 @@ from .api.validator.validate_proposal import router as validator_router
 from .reference_assets import router as reference_assets_router
 from .work_outputs import router as work_outputs_router
 from .routes.substrate_search import router as substrate_search_router
+from .routes.anchor_seeding import router as anchor_seeding_router
 # NOTE: context_templates module removed - superseded by Anchor Seeding
 # See docs/architecture/ANCHOR_SEEDING_ARCHITECTURE.md
 
@@ -172,7 +173,7 @@ routers = (
     reference_assets_router,
     work_outputs_router,  # Phase 1 Work Supervision Lifecycle
     substrate_search_router,  # Phase 1 Claude Agent SDK MCP tools
-    # NOTE: context_templates_router removed - superseded by Anchor Seeding
+    anchor_seeding_router,  # Anchor Seeding - LLM-generated foundational blocks
 )
 
 # Add correlation middleware
