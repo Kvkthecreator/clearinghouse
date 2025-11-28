@@ -1,27 +1,21 @@
-# Governed by: /docs/YARNNN_ALERTS_NOTIFICATIONS_CANON.md (v1.0)
+# Governed by: /docs/architecture/APP_EVENTS_ARCHITECTURE.md
+"""
+EventService - Canonical app_events system for realtime notifications.
 
-import json
+This is the ONLY event system. All other event mechanisms have been removed:
+- event_bus (LISTEN/NOTIFY) - removed, trigger was missing
+- events table - legacy, not used for notifications
+- events_consumer - removed, was orphaned
+
+Use EventService.emit_* methods for all notification needs.
+"""
+
+import logging
 from typing import Optional, Dict, Any
-from datetime import datetime
 import os
 from supabase import create_client, Client
-from schemas.base import AppEvent
 
-
-async def publish_event(db, event_type: str, payload: dict, basket_id: str = None, workspace_id: str = None, actor_id: str = None):
-    # Migrated from basket_events to canonical events table
-    query = """
-        INSERT INTO events (kind, payload, basket_id, workspace_id, origin, actor_id, ts)
-        VALUES (:kind, :payload, :basket_id, :workspace_id, :origin, :actor_id, NOW())
-    """
-    await db.execute(query, {
-        "kind": event_type,
-        "payload": json.dumps(payload),
-        "basket_id": basket_id,
-        "workspace_id": workspace_id,
-        "origin": "system",
-        "actor_id": actor_id
-    })
+logger = logging.getLogger(__name__)
 
 
 class EventService:
@@ -97,9 +91,9 @@ class EventService:
         try:
             result = client.table("app_events").insert(event_data).execute()
             if hasattr(result, 'error') and result.error:
-                print(f"Failed to emit app event: {result.error}")
+                logger.error(f"Failed to emit app event: {result.error}")
         except Exception as e:
-            print(f"Failed to emit app event: {e}")
+            logger.error(f"Failed to emit app event: {e}")
     
     @classmethod
     def emit_job_started(

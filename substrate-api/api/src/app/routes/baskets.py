@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 from ..baskets.schemas import BasketWorkRequest
 from typing import Union
-from infra.substrate.services.deltas import list_deltas, persist_delta, try_apply_delta
-from infra.substrate.services.idempotency import (
+from services.deltas import list_deltas, persist_delta, try_apply_delta
+from services.idempotency import (
     already_processed,
     fetch_delta_by_request_id,
     mark_processed,
