@@ -323,6 +323,7 @@ class SubstrateClient:
         basket_id: UUID | str,
         states: Optional[list[str]] = None,
         limit: Optional[int] = None,
+        prioritize_anchors: bool = True,
     ) -> list[dict]:
         """
         Get all blocks for a basket.
@@ -331,15 +332,19 @@ class SubstrateClient:
             basket_id: Basket UUID
             states: Filter by block states (e.g., ["ACCEPTED", "LOCKED"])
             limit: Maximum number of blocks to return
+            prioritize_anchors: If True, anchor blocks appear first (default: True)
+                               Anchors are advisory quality signals for context assembly.
 
         Returns:
-            List of block dictionaries
+            List of block dictionaries (anchor blocks first if prioritize_anchors=True)
         """
         params = {}
         if states:
             params["states"] = ",".join(states)
         if limit:
             params["limit"] = limit
+        if not prioritize_anchors:
+            params["prioritize_anchors"] = "false"
 
         response = self._request("GET", f"/api/baskets/{basket_id}/blocks", params=params)
         # Handle both list response and {"blocks": [...]} response formats

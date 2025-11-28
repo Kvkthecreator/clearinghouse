@@ -319,18 +319,21 @@ class SubstrateQueryAdapter(MemoryProvider):
             Context object
         """
         # Format block content for agent consumption
+        # API returns "content" field, not "body"
         title = block.get("title", "")
-        body = block.get("body", "")
+        body = block.get("content", "") or block.get("body", "")
         content = f"{title}\n\n{body}".strip() if title else body
 
-        # Preserve substrate metadata
+        # Preserve substrate metadata including anchor fields
         metadata = {
             "id": block.get("id"),
             "block_id": block.get("id"),
             "semantic_type": block.get("semantic_type"),
             "state": block.get("state"),
             "anchor_role": block.get("anchor_role"),
-            "confidence": block.get("confidence"),
+            "anchor_status": block.get("anchor_status"),
+            "anchor_confidence": block.get("anchor_confidence"),
+            "confidence": block.get("confidence_score") or block.get("confidence"),
             "created_at": block.get("created_at"),
         }
 

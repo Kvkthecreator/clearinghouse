@@ -65,6 +65,7 @@ async def list_basket_blocks(
     basket_id: str,
     states: Optional[str] = None,
     limit: int = 20,
+    prioritize_anchors: bool = True,
     db=Depends(get_db),  # noqa: B008
 ):
     """
@@ -80,11 +81,12 @@ async def list_basket_blocks(
         basket_id: Basket UUID
         states: Optional comma-separated list of block states (e.g., "ACCEPTED,LOCKED")
         limit: Maximum number of blocks to return (default: 20)
+        prioritize_anchors: If True, anchor blocks appear first (default: True)
         db: Database connection
 
     Returns:
         List of block dictionaries with id, title, content, semantic_type,
-        confidence_score, state, created_at, updated_at
+        confidence_score, state, anchor_role, created_at, updated_at
 
     Raises:
         HTTPException 400: Invalid basket_id format
@@ -105,8 +107,11 @@ async def list_basket_blocks(
             ) from e
 
         # Build query with optional state filtering
+        # Include anchor_role for context assembly prioritization
         query = """
-            SELECT id, title, content, semantic_type, confidence_score, state, created_at, updated_at
+            SELECT id, title, content, semantic_type, confidence_score, state,
+                   anchor_role, anchor_status, anchor_confidence,
+                   created_at, updated_at
             FROM blocks
             WHERE basket_id = :basket_id
         """
@@ -120,7 +125,13 @@ async def list_basket_blocks(
             query += " AND state = ANY(:states)"
             query_values["states"] = state_list
 
-        query += " ORDER BY created_at DESC LIMIT :limit"
+        # Sort anchor blocks first (advisory pattern - anchors are quality signals)
+        # anchor_role IS NOT NULL = 1 (true), IS NULL = 0 (false)
+        # DESC puts 1s (anchors) first
+        if prioritize_anchors:
+            query += " ORDER BY (anchor_role IS NOT NULL) DESC, created_at DESC LIMIT :limit"
+        else:
+            query += " ORDER BY created_at DESC LIMIT :limit"
         query_values["limit"] = limit
 
         results = await db.fetch_all(query, values=query_values)
@@ -128,9 +139,10 @@ async def list_basket_blocks(
         # Convert to dict format
         blocks = [dict(row) for row in results]
 
+        anchor_count = sum(1 for b in blocks if b.get("anchor_role"))
         logger.debug(
-            f"[SERVICE] Fetched {len(blocks)} blocks for basket {basket_id} "
-            f"(states={states}, limit={limit})"
+            f"[SERVICE] Fetched {len(blocks)} blocks ({anchor_count} anchors) for basket {basket_id} "
+            f"(states={states}, limit={limit}, prioritize_anchors={prioritize_anchors})"
         )
 
         return blocks
