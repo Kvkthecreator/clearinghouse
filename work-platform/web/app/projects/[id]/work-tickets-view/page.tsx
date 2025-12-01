@@ -84,6 +84,14 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
       query = query.eq('status', statusFilter);
     }
 
+    // Filter by agent_type if an agent is selected
+    if (agentFilter) {
+      const selectedAgent = projectAgents.find(a => a.id === agentFilter);
+      if (selectedAgent) {
+        query = query.eq('agent_type', selectedAgent.agent_type);
+      }
+    }
+
     const { data: ticketsData } = await query;
     tickets = ticketsData || [];
 

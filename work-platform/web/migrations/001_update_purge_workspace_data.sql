@@ -1,11 +1,11 @@
 -- Migration: Update purge_workspace_data to include work-platform tables
--- Date: 2025-01-12
--- Purpose: Include projects, work_sessions, agents, and related tables in workspace purge
+-- Date: 2025-01-12 (Updated: 2025-12-01 for Phase 2e schema)
+-- Purpose: Include projects, work_tickets, agents, and related tables in workspace purge
 
 -- Drop old version
 DROP FUNCTION IF EXISTS public.purge_workspace_data(uuid);
 
--- Create updated version with work-platform tables
+-- Create updated version with work-platform tables (Phase 2e schema)
 CREATE OR REPLACE FUNCTION public.purge_workspace_data(target_workspace_id uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -16,39 +16,31 @@ BEGIN
   -- If any DELETE fails, the entire operation rolls back
 
   -- ========================================
-  -- WORK-PLATFORM TABLES (New)
+  -- WORK-PLATFORM TABLES (Phase 2e Schema)
   -- ========================================
 
-  -- Delete work_context_mutations (leaf node, no cascade)
-  DELETE FROM work_context_mutations
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
-  );
-
-  -- Delete work_iterations (leaf node, no cascade)
+  -- Delete work_iterations (references work_tickets)
   DELETE FROM work_iterations
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
+  WHERE work_ticket_id IN (
+    SELECT id FROM work_tickets WHERE workspace_id = target_workspace_id
   );
 
-  -- Delete work_artifacts
-  DELETE FROM work_artifacts
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
-  );
-
-  -- Delete work_checkpoints
+  -- Delete work_checkpoints (references work_tickets)
   DELETE FROM work_checkpoints
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
+  WHERE work_ticket_id IN (
+    SELECT id FROM work_tickets WHERE workspace_id = target_workspace_id
   );
 
-  -- Delete work_sessions (both workspace and project scoped)
-  DELETE FROM work_sessions
+  -- Delete work_tickets (references work_requests)
+  DELETE FROM work_tickets
   WHERE workspace_id = target_workspace_id;
 
-  -- Delete agent_work_requests
-  DELETE FROM agent_work_requests
+  -- Delete work_requests
+  DELETE FROM work_requests
+  WHERE workspace_id = target_workspace_id;
+
+  -- Delete agent_sessions
+  DELETE FROM agent_sessions
   WHERE workspace_id = target_workspace_id;
 
   -- Delete project_agents (before projects)

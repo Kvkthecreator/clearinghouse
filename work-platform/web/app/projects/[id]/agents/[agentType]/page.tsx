@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { createServerComponentClient } from '@/lib/supabase/clients';
 import { getAuthenticatedUser } from '@/lib/auth/getAuthenticatedUser';
-import AgentDashboardClient, { type AgentSession } from '../_components/AgentDashboardClient';
+import AgentDashboardClient, { type WorkTicket } from '../_components/AgentDashboardClient';
 import { ThinkingAgentClient } from '../_components/ThinkingAgentClient';
 import { isAgentType, type AgentType } from '../config';
 
@@ -47,12 +47,14 @@ export default async function AgentPage({ params }: PageProps) {
     .eq('agent_type', agentType)
     .maybeSingle();
 
-  const sessions: AgentSession[] = agentRow
+  // Fetch recent work tickets for this agent type
+  const tickets: WorkTicket[] = project.basket_id
     ? (
         await supabase
-          .from('work_sessions')
-          .select('id, status, created_at, ended_at, task_intent')
-          .eq('project_agent_id', agentRow.id)
+          .from('work_tickets')
+          .select('id, status, agent_type, created_at, completed_at, metadata')
+          .eq('basket_id', project.basket_id)
+          .eq('agent_type', agentType)
           .order('created_at', { ascending: false })
           .limit(5)
       ).data || []
@@ -62,7 +64,7 @@ export default async function AgentPage({ params }: PageProps) {
     <AgentDashboardClient
       project={{ id: project.id, name: project.name }}
       agentRow={agentRow}
-      sessions={sessions}
+      tickets={tickets}
       agentType={agentType as AgentType}
     />
   );

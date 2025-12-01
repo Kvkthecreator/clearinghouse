@@ -28,42 +28,54 @@ export default async function DashboardPage() {
     .order('updated_at', { ascending: false })
     .limit(4);
 
-  const { data: activeSessions = [] } = await supabase
-    .from('work_sessions')
-    .select('id, project_id, task_type, status, created_at')
+  // Fetch active work tickets (pending/running) for the workspace
+  const { data: activeTickets = [] } = await supabase
+    .from('work_tickets')
+    .select('id, basket_id, agent_type, status, created_at, metadata')
     .eq('workspace_id', workspace.id)
     .in('status', ['pending', 'running'])
     .order('created_at', { ascending: false })
     .limit(20);
 
-  const pendingByProject = new Map<string, { count: number; lastCreatedAt: string | null; taskType: string | null }>();
-  activeSessions?.forEach((session) => {
-    if (!session.project_id) return;
-    const entry = pendingByProject.get(session.project_id) ?? { count: 0, lastCreatedAt: null, taskType: null };
-    entry.count += 1;
-    if (!entry.lastCreatedAt || (session.created_at && session.created_at > entry.lastCreatedAt)) {
-      entry.lastCreatedAt = session.created_at ?? entry.lastCreatedAt;
-      entry.taskType = session.task_type ?? entry.taskType;
+  // Build a map from basket_id to project for linking tickets to projects
+  const basketToProject = new Map<string, { id: string; name: string }>();
+
+  // Fetch basket_id for all projects to link tickets
+  const { data: projectsWithBaskets = [] } = await supabase
+    .from('projects')
+    .select('id, name, basket_id')
+    .eq('workspace_id', workspace.id);
+
+  projectsWithBaskets?.forEach((p) => {
+    if (p.basket_id) {
+      basketToProject.set(p.basket_id, { id: p.id, name: p.name || 'Untitled project' });
     }
-    pendingByProject.set(session.project_id, entry);
   });
 
-  const { data: recentRuns = [] } = await supabase
-    .from('work_sessions')
-    .select('id, project_id, agent_type, task_type, status, updated_at, created_at')
+  const pendingByProject = new Map<string, { count: number; lastCreatedAt: string | null; agentType: string | null }>();
+  activeTickets?.forEach((ticket) => {
+    const projectInfo = basketToProject.get(ticket.basket_id);
+    if (!projectInfo) return;
+    const entry = pendingByProject.get(projectInfo.id) ?? { count: 0, lastCreatedAt: null, agentType: null };
+    entry.count += 1;
+    if (!entry.lastCreatedAt || (ticket.created_at && ticket.created_at > entry.lastCreatedAt)) {
+      entry.lastCreatedAt = ticket.created_at ?? entry.lastCreatedAt;
+      entry.agentType = ticket.agent_type ?? entry.agentType;
+    }
+    pendingByProject.set(projectInfo.id, entry);
+  });
+
+  // Fetch recent work tickets
+  const { data: recentTickets = [] } = await supabase
+    .from('work_tickets')
+    .select('id, basket_id, agent_type, status, created_at, completed_at, metadata')
     .eq('workspace_id', workspace.id)
-    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(6);
 
   const projectNameMap = new Map<string, string>();
   projects?.forEach((project) => {
     projectNameMap.set(project.id, project.name || 'Untitled project');
-  });
-  recentRuns?.forEach((run) => {
-    if (run.project_id && !projectNameMap.has(run.project_id)) {
-      const fallback = run.project_id.slice(0, 8);
-      projectNameMap.set(run.project_id, `Project ${fallback}`);
-    }
   });
 
   // Fetch alerts directly from Supabase (server-side)
@@ -125,8 +137,8 @@ export default async function DashboardPage() {
               const activeRuns = pending?.count ?? 0;
               const meta =
                 activeRuns > 0
-                  ? `${activeRuns} run${activeRuns > 1 ? 's' : ''} in flight${pending?.taskType ? ` · ${pending.taskType}` : ''}`
-                  : 'No active runs';
+                  ? `${activeRuns} ticket${activeRuns > 1 ? 's' : ''} in flight${pending?.agentType ? ` · ${pending.agentType}` : ''}`
+                  : 'No active tickets';
               const lastTouch = pending?.lastCreatedAt || project.updated_at || project.created_at;
               return (
                 <Link
@@ -157,31 +169,38 @@ export default async function DashboardPage() {
 
       <section>
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase text-muted-foreground">Recent agent runs</h2>
+          <h2 className="text-sm font-semibold uppercase text-muted-foreground">Recent work tickets</h2>
           <Link href="/projects" className="text-sm text-muted-foreground hover:text-foreground">
             Manage work
           </Link>
         </div>
         <div className="mt-4 space-y-2">
-          {recentRuns && recentRuns.length > 0 ? (
-            recentRuns.map((run) => (
-              <div key={run.id} className="rounded-lg border border-border px-4 py-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium">{projectNameMap.get(run.project_id ?? '') || 'Unknown project'}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {run.agent_type || run.task_type || 'agent'} · {run.task_type ?? 'task'}
-                    </p>
+          {recentTickets && recentTickets.length > 0 ? (
+            recentTickets.map((ticket) => {
+              const projectInfo = basketToProject.get(ticket.basket_id);
+              return (
+                <Link
+                  key={ticket.id}
+                  href={projectInfo ? `/projects/${projectInfo.id}/work-tickets/${ticket.id}` : '#'}
+                  className="block rounded-lg border border-border px-4 py-3 text-sm hover:border-ring transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{projectInfo?.name || 'Unknown project'}</p>
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {ticket.agent_type || 'agent'}
+                      </p>
+                    </div>
+                    <span className={cn('rounded-full px-3 py-1 text-xs font-medium', runStatusBadge(ticket.status))}>
+                      {ticket.status}
+                    </span>
                   </div>
-                  <span className={cn('rounded-full px-3 py-1 text-xs font-medium', runStatusBadge(run.status))}>
-                    {run.status}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Updated {formatTimestamp(run.updated_at ?? run.created_at)}
-                </div>
-              </div>
-            ))
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Created {formatTimestamp(ticket.created_at)}
+                  </div>
+                </Link>
+              );
+            })
           ) : (
             <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
               When agents start running, their activity will show up here.

@@ -1,20 +1,23 @@
 "use client";
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { formatDistanceToNow } from 'date-fns';
+import { ArrowRight } from 'lucide-react';
 import { AGENT_CONFIG, type AgentType } from '../config';
 import { cn } from '@/lib/utils';
 import AgentConfigForm from './AgentConfigForm';
 
-export type AgentSession = {
+export type WorkTicket = {
   id: string;
   status: string;
+  agent_type: string;
   created_at: string;
-  ended_at: string | null;
-  task_intent: string | null;
+  completed_at: string | null;
+  metadata: Record<string, any> | null;
 };
 
 interface AgentDashboardClientProps {
@@ -29,16 +32,16 @@ interface AgentDashboardClientProps {
     is_active: boolean;
     created_at: string;
   } | null;
-  sessions: AgentSession[];
+  tickets: WorkTicket[];
   agentType: AgentType;
 }
 
-export default function AgentDashboardClient({ project, agentRow, sessions, agentType }: AgentDashboardClientProps) {
+export default function AgentDashboardClient({ project, agentRow, tickets, agentType }: AgentDashboardClientProps) {
   const router = useRouter();
   const config = AGENT_CONFIG[agentType];
 
   const statusBadge = agentRow?.is_active ? 'Active' : 'Disabled';
-  const lastSession = sessions[0];
+  const lastTicket = tickets[0];
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -67,16 +70,18 @@ export default function AgentDashboardClient({ project, agentRow, sessions, agen
 
       <Card className="p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Recent Activity</h2>
-        {lastSession ? (
+        {lastTicket ? (
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              Last run {formatDistanceToNow(new Date(lastSession.created_at), { addSuffix: true })}
+              Last run {formatDistanceToNow(new Date(lastTicket.created_at), { addSuffix: true })}
             </p>
-            <p className="text-foreground font-medium">{lastSession.task_intent ?? 'No description provided'}</p>
-            <Badge variant="outline" className="capitalize">{lastSession.status}</Badge>
+            <p className="text-foreground font-medium">
+              {lastTicket.metadata?.task_intent || lastTicket.metadata?.description || 'Work ticket'}
+            </p>
+            <Badge variant="outline" className="capitalize">{lastTicket.status}</Badge>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No work sessions yet. Kick off your first task.</p>
+          <p className="text-sm text-muted-foreground">No work tickets yet. Kick off your first task.</p>
         )}
       </Card>
 
@@ -90,21 +95,35 @@ export default function AgentDashboardClient({ project, agentRow, sessions, agen
       )}
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Work History</h2>
-        {sessions.length === 0 ? (
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-foreground">Work History</h2>
+          {agentRow && tickets.length > 0 && (
+            <Link
+              href={`/projects/${project.id}/work-tickets-view?agent=${agentRow.id}`}
+              className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+            >
+              View all <ArrowRight className="h-3 w-3" />
+            </Link>
+          )}
+        </div>
+        {tickets.length === 0 ? (
           <p className="text-sm text-muted-foreground">Work history will appear here once this agent starts running tasks.</p>
         ) : (
           <div className="space-y-3">
-            {sessions.map((session) => (
-              <div key={session.id} className="rounded-lg border border-border p-4">
+            {tickets.map((ticket) => (
+              <Link
+                key={ticket.id}
+                href={`/projects/${project.id}/work-tickets/${ticket.id}`}
+                className="block rounded-lg border border-border p-4 hover:border-ring transition-colors"
+              >
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{new Date(session.created_at).toLocaleString()}</span>
-                  <Badge variant="outline" className="capitalize">{session.status}</Badge>
+                  <span className="text-muted-foreground">{new Date(ticket.created_at).toLocaleString()}</span>
+                  <Badge variant="outline" className="capitalize">{ticket.status}</Badge>
                 </div>
                 <p className="mt-2 text-foreground text-sm font-medium">
-                  {session.task_intent ?? 'Session without description'}
+                  {ticket.metadata?.task_intent || ticket.metadata?.description || 'Work ticket'}
                 </p>
-              </div>
+              </Link>
             ))}
           </div>
         )}
