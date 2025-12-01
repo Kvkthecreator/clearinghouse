@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { createServerComponentClient } from '@/lib/supabase/clients';
 import { getAuthenticatedUser } from '@/lib/auth/getAuthenticatedUser';
-import AgentDashboardClient, { type WorkTicket } from '../_components/AgentDashboardClient';
+import AgentDashboardClient, { type WorkTicket, type Recipe } from '../_components/AgentDashboardClient';
 import { ThinkingAgentClient } from '../_components/ThinkingAgentClient';
 import { isAgentType, type AgentType } from '../config';
 
@@ -60,11 +60,27 @@ export default async function AgentPage({ params }: PageProps) {
       ).data || []
     : [];
 
+  // Fetch recipes for this agent type
+  const { data: recipesData } = await supabase
+    .from('work_recipes')
+    .select('id, name, slug, description, agent_type')
+    .eq('status', 'active')
+    .eq('agent_type', agentType)
+    .order('name', { ascending: true });
+
+  const recipes: Recipe[] = (recipesData || []).map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    description: r.description,
+  }));
+
   return (
     <AgentDashboardClient
       project={{ id: project.id, name: project.name }}
       agentRow={agentRow}
       tickets={tickets}
+      recipes={recipes}
       agentType={agentType as AgentType}
     />
   );

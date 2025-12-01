@@ -20,6 +20,13 @@ export type WorkTicket = {
   metadata: Record<string, any> | null;
 };
 
+export type Recipe = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+};
+
 interface AgentDashboardClientProps {
   project: {
     id: string;
@@ -33,15 +40,17 @@ interface AgentDashboardClientProps {
     created_at: string;
   } | null;
   tickets: WorkTicket[];
+  recipes: Recipe[];
   agentType: AgentType;
 }
 
-export default function AgentDashboardClient({ project, agentRow, tickets, agentType }: AgentDashboardClientProps) {
+export default function AgentDashboardClient({ project, agentRow, tickets, recipes, agentType }: AgentDashboardClientProps) {
   const router = useRouter();
   const config = AGENT_CONFIG[agentType];
 
   const statusBadge = agentRow?.is_active ? 'Active' : 'Disabled';
   const lastTicket = tickets[0];
+  const isDisabled = !agentRow?.is_active;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -58,15 +67,46 @@ export default function AgentDashboardClient({ project, agentRow, tickets, agent
             </div>
             <p className="mt-2 text-muted-foreground max-w-2xl">{config.description}</p>
           </div>
-          <Button
-            variant="secondary"
-            disabled={!agentRow?.is_active}
-            onClick={() => router.push(`/projects/${project.id}/overview?agent=${agentRow?.id ?? ''}`)}
-          >
-            Create Work Request
-          </Button>
         </div>
       </header>
+
+      {/* Available Work Recipes */}
+      <Card className="p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">What I Can Do</h2>
+        {recipes.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {recipes.map((recipe) => (
+              <button
+                key={recipe.id}
+                onClick={() => router.push(`/projects/${project.id}/work-tickets/new/configure?recipe=${recipe.slug}`)}
+                disabled={isDisabled}
+                className={cn(
+                  "text-left rounded-xl border p-4 transition-all",
+                  isDisabled
+                    ? "opacity-50 cursor-not-allowed bg-muted"
+                    : "hover:border-primary hover:shadow-sm cursor-pointer bg-card"
+                )}
+              >
+                <h3 className="font-medium text-foreground">{recipe.name}</h3>
+                {recipe.description && (
+                  <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                    {recipe.description}
+                  </p>
+                )}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No work recipes available for this agent yet.
+          </p>
+        )}
+        {isDisabled && recipes.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-3">
+            Enable this agent to start work requests.
+          </p>
+        )}
+      </Card>
 
       <Card className="p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Recent Activity</h2>
