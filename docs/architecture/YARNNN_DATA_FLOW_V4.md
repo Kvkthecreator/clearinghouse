@@ -1,11 +1,11 @@
-# YARNNN Data Flow v4.1
+# YARNNN Data Flow v4.2
 
 **Complete Work Flow with Separated Governance**
 
-**Version**: 4.1
-**Date**: 2025-11-26
+**Version**: 4.2
+**Date**: 2025-12-01
 **Status**: ✅ Canonical
-**Supersedes**: YARNNN_DATA_FLOW_V4.md (unified governance legacy)
+**Supersedes**: v4.1 (added direct block CRUD)
 
 ---
 
@@ -15,8 +15,9 @@ This document traces complete data flows through YARNNN's two-layer architecture
 
 - **Work Supervision** (work-platform): Reviews work output quality
 - **Substrate Governance** (substrate-API): P1 proposals with semantic dedup
+- **Direct Block CRUD** (user-authored): Trusted content bypasses governance
 
-**Key Insight**: YARNNN's value emerges from tight integration between work orchestration (Layer 2) and substrate core (Layer 1), but with INDEPENDENT governance systems.
+**Key Insight**: YARNNN's value emerges from tight integration between work orchestration (Layer 2) and substrate core (Layer 1), but with INDEPENDENT governance systems. User-authored content is trusted and managed directly.
 
 ---
 
@@ -46,6 +47,75 @@ Response: {project_id, basket_id, dump_id}
 - `baskets` (substrate-API)
 - `raw_dumps` (substrate-API)
 - `projects` (work-platform)
+
+---
+
+### Phase 1b: Direct Block Management (User-Authored)
+
+Users can directly create, edit, and delete blocks on the Context page. User-authored content is **trusted** and bypasses governance.
+
+```
+User Action: Create block on Context page
+  ↓
+POST /api/projects/{id}/context/blocks (work-platform BFF)
+  ↓
+work-platform → substrate-API: POST /api/baskets/{basket_id}/blocks
+  body: {title, content, semantic_type, workspace_id}
+  ↓
+substrate-API: INSERT INTO blocks
+  (state: ACCEPTED, confidence: 1.0, author_type: user)
+  ↓
+substrate-API: queue_embedding_generation(block_id)
+  ↓
+substrate-API: emit_timeline_event(block_created)
+  ↓
+Response: {block with id, state, timestamps}
+```
+
+```
+User Action: Edit existing block
+  ↓
+PUT /api/projects/{id}/context/{blockId} (work-platform BFF)
+  ↓
+work-platform → substrate-API: PUT /api/baskets/{basket_id}/blocks/{block_id}
+  ↓
+substrate-API: Validate state != LOCKED
+  ↓
+substrate-API: UPDATE blocks SET title/content/semantic_type, updated_at
+  ↓
+substrate-API: Clear embedding (regenerate async)
+  ↓
+substrate-API: emit_timeline_event(block_updated)
+  ↓
+Response: {updated block}
+```
+
+```
+User Action: Delete block
+  ↓
+DELETE /api/projects/{id}/context/{blockId} (work-platform BFF)
+  ↓
+work-platform → substrate-API: DELETE /api/baskets/{basket_id}/blocks/{block_id}
+  ↓
+substrate-API: Validate state != LOCKED
+  ↓
+substrate-API: UPDATE blocks SET state='SUPERSEDED'
+  ↓
+substrate-API: emit_timeline_event(block_deleted)
+  ↓
+Response: {deletion confirmation}
+```
+
+**Tables Modified**:
+- `blocks` (substrate-API - direct CRUD)
+- `timeline_events` (substrate-API - audit trail)
+
+**Key Points**:
+- User-authored blocks created in **ACCEPTED** state (trusted)
+- Confidence set to **1.0** (user-provided = trusted)
+- LOCKED blocks cannot be modified or deleted
+- Soft-delete via SUPERSEDED state (not hard delete)
+- Embeddings regenerated asynchronously after mutations
 
 ---
 
@@ -213,15 +283,17 @@ Block created
              ↓
 ┌──────────────────────────────────────────────────────────┐
 │ substrate-API: baskets, raw_dumps                        │
-└────────────┬─────────────────────────────────────────────┘
-             ↓
-┌──────────────────────────────────────────────────────────┐
-│ Agent executes (queries substrate context)               │
-└────────────┬─────────────────────────────────────────────┘
-             ↓
-┌──────────────────────────────────────────────────────────┐
-│ Agent emits work_outputs (stored in substrate-API)       │
-└────────────┬─────────────────────────────────────────────┘
+└────────────┬───────────────────────┬────────────────────┘
+             ↓                       ↓
+┌────────────────────────┐  ┌───────────────────────────────┐
+│ Agent executes         │  │ DIRECT BLOCK CRUD (User)      │
+│ (queries context)      │  │ → Create/Edit/Delete blocks   │
+└────────────┬───────────┘  │ → ACCEPTED state, conf=1.0    │
+             ↓              │ → Bypasses governance          │
+┌────────────────────────┐  └───────────────────────────────┘
+│ Agent emits work_outputs│
+│ (stored in substrate)   │
+└────────────┬────────────┘
              ↓
 ┌──────────────────────────────────────────────────────────┐
 │ WORK SUPERVISION: User reviews outputs (work-platform)   │
@@ -237,6 +309,10 @@ Block created
 │ → blocks created (state: ACCEPTED)                       │
 └──────────────────────────────────────────────────────────┘
 ```
+
+**Two Paths to Blocks**:
+1. **User-authored** (Direct): User → Block CRUD → ACCEPTED (trusted, immediate)
+2. **Agent-generated** (Governed): Agent → work_output → [future] proposal → governance → ACCEPTED
 
 ---
 
@@ -258,12 +334,17 @@ Block created
 |-------|--------|------|--------|--------|
 | `baskets` | ✅ (HTTP) | ✅ (HTTP) | ✅ (HTTP) | ❌ |
 | `raw_dumps` | ✅ (HTTP) | ✅ (HTTP) | ❌ | ❌ |
-| `blocks` | ❌ | ✅ (HTTP) | ❌ | ❌ |
+| `blocks` | ✅ (HTTP, user-authored) | ✅ (HTTP) | ✅ (HTTP, non-LOCKED) | ✅ (soft, non-LOCKED) |
 | `work_outputs` | ✅ (HTTP) | ✅ (HTTP) | ✅ (HTTP) | ❌ |
 | `proposals` | ⏸️ (future) | ✅ (HTTP) | ❌ | ❌ |
 | `documents` | ❌ | ✅ (HTTP) | ❌ | ❌ |
 
 **Key**: ✅ = Supported, ❌ = Not supported, ⏸️ = Deferred/partial
+
+**Block CRUD Notes**:
+- Create: User-authored blocks only (ACCEPTED state, confidence=1.0)
+- Update: Title, content, semantic_type (LOCKED blocks protected)
+- Delete: Soft-delete to SUPERSEDED state (LOCKED blocks protected)
 
 ---
 
@@ -275,4 +356,4 @@ Block created
 
 ---
 
-**Two layers. Separated governance. Clear data flows. This is YARNNN v4.1.**
+**Two layers. Separated governance. Direct user control. Clear data flows. This is YARNNN v4.2.**
