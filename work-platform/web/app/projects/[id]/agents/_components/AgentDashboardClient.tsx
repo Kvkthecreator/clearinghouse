@@ -10,6 +10,7 @@ import { ArrowRight } from 'lucide-react';
 import { AGENT_CONFIG, type AgentType } from '../config';
 import { cn } from '@/lib/utils';
 import AgentConfigForm from './AgentConfigForm';
+import { ContextReadinessCard } from './ContextReadinessCard';
 
 export type WorkTicket = {
   id: string;
@@ -69,6 +70,9 @@ export default function AgentDashboardClient({ project, agentRow, tickets, recip
           </div>
         </div>
       </header>
+
+      {/* Context Readiness Indicator */}
+      <ContextReadinessCard projectId={project.id} agentType={agentType} />
 
       {/* Available Work Recipes */}
       <Card className="p-6">
