@@ -5,6 +5,29 @@
  * Mirrors backend recipe schema and execution models.
  */
 
+export interface RecipeContextRequirements {
+  roles?: string[]
+  roles_optional?: string[]
+  substrate_blocks?: {
+    min_blocks?: number
+    semantic_types?: string[]
+    recency_preference?: string
+  }
+  reference_assets?: {
+    types?: string[]
+    required?: boolean
+    min_count?: number
+  }
+}
+
+export interface RecipeContextOutputs {
+  role: string
+  refresh_policy?: {
+    ttl_hours: number
+    auto_promote?: boolean
+  }
+}
+
 export interface Recipe {
   id: string
   slug: string
@@ -20,6 +43,8 @@ export interface Recipe {
   configurable_parameters: Record<string, ParameterSchema>
   estimated_duration_seconds: [number, number]  // [min, max]
   estimated_cost_cents: [number, number]  // [min, max]
+  context_requirements?: RecipeContextRequirements
+  context_outputs?: RecipeContextOutputs
 }
 
 export interface ParameterSchema {
