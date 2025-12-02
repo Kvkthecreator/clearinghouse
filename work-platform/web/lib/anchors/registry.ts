@@ -338,3 +338,128 @@ export async function checkRolesFreshness(
     missingRoles,
   };
 }
+
+// =====================================================
+// Work Output Promotion
+// =====================================================
+
+export interface PromotabilityCheck {
+  promotable: boolean;
+  reason?: string;
+  requires_approval?: boolean;
+  target_role?: string;
+  supervision_status?: string;
+  auto_promote?: boolean;
+  promoted_to_block_id?: string;
+}
+
+/**
+ * Check if a work output can be promoted to a context block.
+ */
+export async function checkOutputPromotable(
+  supabase: SupabaseClient,
+  outputId: string
+): Promise<PromotabilityCheck> {
+  const { data, error } = await supabase.rpc('check_output_promotable', {
+    p_output_id: outputId,
+  });
+
+  if (error) {
+    throw new Error(`Failed to check promotability: ${error.message}`);
+  }
+
+  return data as PromotabilityCheck;
+}
+
+export interface PromotionResult {
+  success: boolean;
+  block_id?: string;
+  error?: string;
+}
+
+/**
+ * Promote a work output to a context block.
+ * Creates a new block with the target_context_role as anchor_role.
+ */
+export async function promoteOutputToContextBlock(
+  supabase: SupabaseClient,
+  outputId: string,
+  promotedBy?: string,
+  overrideRole?: string
+): Promise<PromotionResult> {
+  const { data, error } = await supabase.rpc('promote_output_to_context_block', {
+    p_output_id: outputId,
+    p_promoted_by: promotedBy ?? null,
+    p_override_role: overrideRole ?? null,
+  });
+
+  if (error) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+
+  return {
+    success: true,
+    block_id: data as string,
+  };
+}
+
+/**
+ * Get all promotable work outputs for a basket.
+ * These are outputs with target_context_role that haven't been promoted yet.
+ */
+export async function getPromotableOutputs(
+  supabase: SupabaseClient,
+  basketId: string
+): Promise<{
+  id: string;
+  title: string;
+  target_context_role: string;
+  supervision_status: string;
+  auto_promote: boolean;
+  created_at: string;
+}[]> {
+  const { data, error } = await supabase
+    .from('work_outputs')
+    .select('id, title, target_context_role, supervision_status, auto_promote, created_at')
+    .eq('basket_id', basketId)
+    .not('target_context_role', 'is', null)
+    .eq('promotion_status', 'pending')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to get promotable outputs: ${error.message}`);
+  }
+
+  return (data ?? []).map(row => ({
+    id: row.id,
+    title: row.title ?? 'Untitled Output',
+    target_context_role: row.target_context_role,
+    supervision_status: row.supervision_status ?? 'pending',
+    auto_promote: row.auto_promote ?? false,
+    created_at: row.created_at,
+  }));
+}
+
+/**
+ * Insight roles that can be refreshed/scheduled.
+ */
+export const INSIGHT_ROLES = [
+  'trend_digest',
+  'competitor_snapshot',
+  'market_signal',
+  'brand_voice',
+  'strategic_direction',
+  'customer_insight',
+] as const;
+
+export type InsightRole = typeof INSIGHT_ROLES[number];
+
+/**
+ * Check if a role is an insight role (refreshable by agents).
+ */
+export function isInsightRole(role: string): role is InsightRole {
+  return INSIGHT_ROLES.includes(role as InsightRole);
+}
