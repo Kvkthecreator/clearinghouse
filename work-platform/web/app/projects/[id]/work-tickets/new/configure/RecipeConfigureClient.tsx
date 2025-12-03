@@ -60,8 +60,10 @@ interface Recipe {
 
 interface ContextAnchor {
   anchor_key: string;
-  lifecycle: string;
+  entry_key?: string;           // For non-singleton entries (e.g., competitor name)
+  lifecycle: string;            // 'approved' if has data, 'pending' otherwise
   updated_at?: string;
+  completeness_score?: number;  // 0.0-1.0 based on required fields filled
 }
 
 interface ExistingSchedule {

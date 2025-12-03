@@ -61,19 +61,22 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     redirect(`/projects/${projectId}/work-tickets/new`);
   }
 
-  // Fetch context anchors for this basket
-  // Note: blocks use uppercase states (ACCEPTED, PROPOSED, SUPERSEDED)
-  const { data: contextBlocks } = await supabase
-    .from('blocks')
-    .select('id, anchor_role, state, updated_at')
+  // Fetch context entries for this basket (new schema-driven system)
+  // Context entries replace legacy blocks for work recipe context management
+  const { data: contextEntries } = await supabase
+    .from('context_entries')
+    .select('id, anchor_role, entry_key, data, completeness_score, state, updated_at')
     .eq('basket_id', project.basket_id)
-    .not('anchor_role', 'is', null)
-    .eq('state', 'ACCEPTED');
+    .eq('state', 'active');
 
-  const contextAnchors = (contextBlocks || []).map(b => ({
-    anchor_key: b.anchor_role,
-    lifecycle: 'approved', // Map ACCEPTED -> approved for frontend
-    updated_at: b.updated_at,
+  // Transform to contextAnchors format for RecipeConfigureClient
+  // An entry is considered "approved" if it has data (completeness > 0)
+  const contextAnchors = (contextEntries || []).map(entry => ({
+    anchor_key: entry.anchor_role,
+    entry_key: entry.entry_key,
+    lifecycle: (entry.completeness_score && entry.completeness_score > 0) ? 'approved' : 'pending',
+    updated_at: entry.updated_at,
+    completeness_score: entry.completeness_score,
   }));
 
   // Transform database recipe to frontend format
