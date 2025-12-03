@@ -8,18 +8,24 @@ import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Badge } from "@/components/ui/Badge";
-import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput, Calendar, Clock, RefreshCw, History, Zap, ExternalLink } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput, Calendar, Clock, RefreshCw, History, Zap, ExternalLink, Palette, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-// Role display configuration
+// Role display configuration - aligned with context_entry_schemas
 const ROLE_CONFIG: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
+  // Foundation roles
   problem: { label: "Problem", icon: AlertTriangle },
   customer: { label: "Customer", icon: Users },
   vision: { label: "Vision", icon: Eye },
-  solution: { label: "Solution", icon: CheckCircle2 },
+  brand: { label: "Brand", icon: Palette },
+  // Market roles
+  competitor: { label: "Competitor", icon: Target },
+  // Insight roles (agent-produced)
   trend_digest: { label: "Trend Digest", icon: TrendingUp },
-  competitor_snapshot: { label: "Competitor Snapshot", icon: Target },
+  competitor_snapshot: { label: "Competitor Snapshot", icon: BarChart3 },
+  // Legacy roles (for backward compatibility)
+  solution: { label: "Solution", icon: CheckCircle2 },
   market_signal: { label: "Market Signal", icon: Brain },
   brand_voice: { label: "Brand Voice", icon: MessageSquare },
   strategic_direction: { label: "Strategic Direction", icon: Compass },
@@ -483,10 +489,10 @@ export default function RecipeConfigureClient({
             </div>
           )}
 
-          {/* Missing context warning */}
-          {!hasAllRequired && (
+          {/* Missing context warning - deep link to first missing role */}
+          {!hasAllRequired && missingRoles.length > 0 && (
             <Link
-              href={`/projects/${projectId}/context`}
+              href={`/projects/${projectId}/context?add=${missingRoles[0]}`}
               className="mt-3 flex items-center gap-1 text-xs text-yellow-700 hover:text-yellow-800"
             >
               <ArrowLeft className="h-3 w-3 rotate-180" />
