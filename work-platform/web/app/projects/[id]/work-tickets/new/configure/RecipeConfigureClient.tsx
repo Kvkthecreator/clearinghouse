@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Badge } from "@/components/ui/Badge";
-import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput, Calendar, Clock, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -64,13 +64,43 @@ interface ContextAnchor {
   updated_at?: string;
 }
 
+interface ExistingSchedule {
+  id: string;
+  frequency: string;
+  day_of_week: number;
+  time_of_day: string;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+}
+
 interface RecipeConfigureClientProps {
   projectId: string;
   basketId: string;
   workspaceId: string;
-  recipe: Recipe;
+  recipe: Recipe & { db_id?: string };
   contextAnchors?: ContextAnchor[];
+  existingSchedule?: ExistingSchedule | null;
 }
+
+// Day of week options
+const DAY_OPTIONS = [
+  { value: 0, label: "Sunday" },
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" },
+];
+
+// Frequency options with descriptions
+const FREQUENCY_OPTIONS = [
+  { value: "", label: "Run once (no schedule)", description: "Execute now only" },
+  { value: "weekly", label: "Weekly", description: "Every week" },
+  { value: "biweekly", label: "Every 2 weeks", description: "Biweekly" },
+  { value: "monthly", label: "Monthly", description: "Once per month" },
+];
 
 export default function RecipeConfigureClient({
   projectId,
@@ -78,6 +108,7 @@ export default function RecipeConfigureClient({
   workspaceId,
   recipe,
   contextAnchors = [],
+  existingSchedule = null,
 }: RecipeConfigureClientProps) {
   const router = useRouter();
 
@@ -105,6 +136,14 @@ export default function RecipeConfigureClient({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Schedule state
+  const [scheduleFrequency, setScheduleFrequency] = useState(existingSchedule?.frequency || "");
+  const [scheduleDayOfWeek, setScheduleDayOfWeek] = useState(existingSchedule?.day_of_week ?? 1);
+  const [scheduleTime, setScheduleTime] = useState(existingSchedule?.time_of_day?.slice(0, 5) || "09:00");
+  const [scheduleEnabled, setScheduleEnabled] = useState(existingSchedule?.enabled ?? true);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
 
   const handleInputChange = (key: string, value: any) => {
     setFormValues((prev) => ({ ...prev, [key]: value }));
@@ -192,6 +231,93 @@ export default function RecipeConfigureClient({
       }
       return value !== undefined && value !== null && value !== "";
     });
+  };
+
+  // Save or update schedule
+  const handleSaveSchedule = async () => {
+    if (!scheduleFrequency || !recipe.db_id) return;
+
+    setSavingSchedule(true);
+    setError(null);
+    setScheduleSuccess(null);
+
+    try {
+      const scheduleData = {
+        recipe_id: recipe.db_id,
+        frequency: scheduleFrequency,
+        day_of_week: scheduleDayOfWeek,
+        time_of_day: `${scheduleTime}:00`,
+        recipe_parameters: formValues,
+        enabled: scheduleEnabled,
+      };
+
+      const method = existingSchedule ? "PATCH" : "POST";
+      const url = existingSchedule
+        ? `/api/projects/${projectId}/schedules/${existingSchedule.id}`
+        : `/api/projects/${projectId}/schedules`;
+
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scheduleData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+
+      setScheduleSuccess(existingSchedule ? "Schedule updated!" : "Schedule created!");
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setScheduleSuccess(null), 3000);
+
+    } catch (err: any) {
+      console.error("Failed to save schedule:", err);
+      setError(err.message || "Failed to save schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  // Delete schedule
+  const handleDeleteSchedule = async () => {
+    if (!existingSchedule) return;
+
+    setSavingSchedule(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/schedules/${existingSchedule.id}`,
+        { method: "DELETE" }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+
+      setScheduleFrequency("");
+      setScheduleSuccess("Schedule deleted");
+      setTimeout(() => setScheduleSuccess(null), 3000);
+
+    } catch (err: any) {
+      console.error("Failed to delete schedule:", err);
+      setError(err.message || "Failed to delete schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  // Get recommended frequency based on TTL
+  const getRecommendedFrequency = () => {
+    const ttlHours = recipe.context_outputs?.refresh_policy?.ttl_hours;
+    if (!ttlHours) return null;
+    const days = Math.round(ttlHours / 24);
+    if (days <= 7) return "weekly";
+    if (days <= 14) return "biweekly";
+    return "monthly";
   };
 
   return (
@@ -422,6 +548,148 @@ export default function RecipeConfigureClient({
             ))}
           </div>
         </Card>
+
+        {/* Schedule Card - only show for recipes with context_outputs (refresh-able) */}
+        {recipe.context_outputs && recipe.db_id && (
+          <Card className="p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Calendar className="h-5 w-5 text-primary" />
+              <h2 className="text-xl font-semibold text-foreground">Schedule (Optional)</h2>
+            </div>
+
+            <p className="text-sm text-muted-foreground mb-4">
+              Set up automatic recurring execution to keep your {ROLE_CONFIG[recipe.context_outputs.role]?.label || recipe.context_outputs.role} context fresh.
+            </p>
+
+            <div className="space-y-4">
+              {/* Frequency selector */}
+              <div className="space-y-2">
+                <Label htmlFor="schedule-frequency">Repeat this recipe</Label>
+                <select
+                  id="schedule-frequency"
+                  value={scheduleFrequency}
+                  onChange={(e) => setScheduleFrequency(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  {FREQUENCY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {/* Recommended frequency hint */}
+                {getRecommendedFrequency() && scheduleFrequency === "" && (
+                  <p className="text-xs text-muted-foreground">
+                    Recommended: <button
+                      type="button"
+                      onClick={() => setScheduleFrequency(getRecommendedFrequency()!)}
+                      className="text-primary hover:underline"
+                    >
+                      {FREQUENCY_OPTIONS.find(f => f.value === getRecommendedFrequency())?.label}
+                    </button> based on {Math.round((recipe.context_outputs?.refresh_policy?.ttl_hours || 168) / 24)}-day refresh policy
+                  </p>
+                )}
+              </div>
+
+              {/* Day and time selectors - only show when frequency is set */}
+              {scheduleFrequency && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-day">Day of week</Label>
+                    <select
+                      id="schedule-day"
+                      value={scheduleDayOfWeek}
+                      onChange={(e) => setScheduleDayOfWeek(parseInt(e.target.value))}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {DAY_OPTIONS.map((day) => (
+                        <option key={day.value} value={day.value}>
+                          {day.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-time">Time (UTC)</Label>
+                    <Input
+                      id="schedule-time"
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Existing schedule info */}
+              {existingSchedule && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <RefreshCw className="h-4 w-4 text-primary" />
+                    <span className="font-medium">Active Schedule</span>
+                    <Badge variant="outline" className={cn(
+                      "text-xs ml-auto",
+                      existingSchedule.enabled
+                        ? "bg-green-500/10 text-green-700 border-green-500/30"
+                        : "bg-muted text-muted-foreground"
+                    )}>
+                      {existingSchedule.enabled ? "Enabled" : "Paused"}
+                    </Badge>
+                  </div>
+                  {existingSchedule.next_run_at && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      <Clock className="h-3 w-3 inline mr-1" />
+                      Next run: {new Date(existingSchedule.next_run_at).toLocaleString()}
+                    </p>
+                  )}
+                  {existingSchedule.last_run_at && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Last run: {new Date(existingSchedule.last_run_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Schedule action buttons */}
+              {scheduleFrequency && (
+                <div className="flex items-center gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveSchedule}
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <Calendar className="h-4 w-4 mr-1" />
+                    )}
+                    {existingSchedule ? "Update Schedule" : "Save Schedule"}
+                  </Button>
+                  {existingSchedule && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDeleteSchedule}
+                      disabled={savingSchedule}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      Delete Schedule
+                    </Button>
+                  )}
+                  {scheduleSuccess && (
+                    <span className="text-sm text-green-600 flex items-center gap-1">
+                      <CheckCircle2 className="h-4 w-4" />
+                      {scheduleSuccess}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
 
         {/* Error Display */}
         {error && (

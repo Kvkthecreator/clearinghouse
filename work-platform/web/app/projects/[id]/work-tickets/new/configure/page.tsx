@@ -123,6 +123,14 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     context_outputs: recipeData.context_outputs,
   };
 
+  // Fetch existing schedule for this project/recipe combo
+  const { data: existingSchedule } = await supabase
+    .from('project_schedules')
+    .select('id, frequency, day_of_week, time_of_day, enabled, next_run_at, last_run_at')
+    .eq('project_id', projectId)
+    .eq('recipe_id', recipeData.id)
+    .maybeSingle();
+
   return (
     <RecipeConfigureClient
       projectId={projectId}
@@ -130,6 +138,7 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
       workspaceId={project.workspace_id}
       recipe={recipe}
       contextAnchors={contextAnchors}
+      existingSchedule={existingSchedule}
     />
   );
 }

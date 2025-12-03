@@ -36,6 +36,7 @@ from middleware.correlation import CorrelationIdMiddleware
 from .agent_entrypoints import router as agent_router, run_agent, run_agent_direct
 from .routes.reflections import router as reflections_router
 from services.canonical_queue_processor import start_canonical_queue_processor, stop_canonical_queue_processor, get_canonical_queue_health
+from services.job_worker import start_job_worker, stop_job_worker, get_job_worker_status
 from .routes.agent_memory import router as agent_memory_router
 from .routes.agent_run import router as agent_run_router
 from .routes.agents import router as agents_router
@@ -105,10 +106,23 @@ async def lifespan(app: FastAPI):
     await start_canonical_queue_processor()
     logger.info("Canonical agent queue processor started - Canon v2.1 ready")
 
+    # Start job worker for scheduling, stale refresh, etc.
+    # See docs/features/scheduling.md for architecture
+    try:
+        from .utils.supabase import supabase_admin
+        supabase = supabase_admin()
+        await start_job_worker(supabase, worker_id="render-main")
+        logger.info("Job worker started - scheduling enabled")
+    except Exception as e:
+        # Don't fail startup if job worker fails - it's not critical
+        logger.warning(f"Job worker failed to start (non-critical): {e}")
+
     try:
         yield
     finally:
         # Clean shutdown
+        await stop_job_worker()
+        logger.info("Job worker stopped")
         await stop_canonical_queue_processor()
         logger.info("Canonical agent queue processor stopped")
 
