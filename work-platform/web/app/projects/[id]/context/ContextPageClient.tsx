@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Database, FileText, FileBox, Image } from "lucide-react";
+import { Database, FileText, FileBox, Image, Layers } from "lucide-react";
 import ContextBlocksClient from "./ContextBlocksClient";
 import ContextEntriesClient from "./ContextEntriesClient";
 import ContextDocumentsClient from "./ContextDocumentsClient";
 import ContextImagesClient from "./ContextImagesClient";
+import ContextEntriesPanel from "@/components/context/ContextEntriesPanel";
 
-type TabValue = "blocks" | "entries" | "documents" | "images";
+type TabValue = "structured" | "blocks" | "entries" | "documents" | "images";
 
 interface ContextPageClientProps {
   projectId: string;
@@ -17,14 +18,21 @@ interface ContextPageClientProps {
 }
 
 /**
- * ContextPageClient - Renders the 4-tab context view
+ * ContextPageClient - Renders the 5-tab context view
+ *
+ * Tabs:
+ * - Structured: Schema-driven context entries (problem, customer, vision, brand, competitors)
+ * - Blocks: Extracted knowledge blocks (facts, insights, metrics)
+ * - Entries: Raw text dumps and agent outputs
+ * - Documents: PDF and document assets
+ * - Images: Image assets
  *
  * Modal management is centralized in AddContextButton (rendered in page header).
  * Tab components are display-only and do not manage their own modals.
  */
 export default function ContextPageClient({ projectId, basketId, addRole }: ContextPageClientProps) {
-  // Default to blocks tab when addRole is provided (to show the create modal)
-  const [activeTab, setActiveTab] = useState<TabValue>(addRole ? "blocks" : "blocks");
+  // Default to structured tab (new primary context entry point)
+  const [activeTab, setActiveTab] = useState<TabValue>(addRole ? "blocks" : "structured");
 
   return (
     <Tabs
@@ -32,7 +40,11 @@ export default function ContextPageClient({ projectId, basketId, addRole }: Cont
       onValueChange={(value) => setActiveTab(value as TabValue)}
       className="w-full"
     >
-      <TabsList className="grid w-full max-w-[600px] grid-cols-4">
+      <TabsList className="grid w-full max-w-[750px] grid-cols-5">
+        <TabsTrigger value="structured" className="flex items-center gap-2">
+          <Layers className="h-4 w-4" />
+          Context
+        </TabsTrigger>
         <TabsTrigger value="blocks" className="flex items-center gap-2">
           <Database className="h-4 w-4" />
           Blocks
@@ -50,6 +62,10 @@ export default function ContextPageClient({ projectId, basketId, addRole }: Cont
           Images
         </TabsTrigger>
       </TabsList>
+
+      <TabsContent value="structured" className="mt-6">
+        <ContextEntriesPanel projectId={projectId} basketId={basketId} />
+      </TabsContent>
 
       <TabsContent value="blocks" className="mt-6">
         <ContextBlocksClient projectId={projectId} basketId={basketId} addRole={addRole} />
