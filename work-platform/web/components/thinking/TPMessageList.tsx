@@ -133,13 +133,15 @@ function ToolCallPreview({ call }: ToolCallPreviewProps) {
 
   const resultStatus = getResultStatus(call.result);
 
+  const itemType = call.input?.item_type as string | undefined;
+
   return (
     <li className="flex items-start gap-2 text-xs text-muted-foreground">
       {getToolIcon(call.name)}
       <div className="flex-1">
         <span className="font-medium">{call.name}</span>
-        {call.input?.item_type && (
-          <span className="ml-1">({call.input.item_type as string})</span>
+        {itemType && (
+          <span className="ml-1">({itemType})</span>
         )}
         {resultStatus && (
           <span
