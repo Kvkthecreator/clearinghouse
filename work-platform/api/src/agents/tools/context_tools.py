@@ -238,7 +238,7 @@ async def write_context(
     title: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Write a context item. Foundation tier creates governance proposal.
+    Write a context item. Foundation tier respects workspace governance settings.
 
     Args:
         basket_id: Basket UUID
@@ -282,21 +282,29 @@ async def write_context(
         field_schema = schema.get("field_schema", {})
         completeness = _calculate_completeness(content, field_schema)
 
-        # Foundation tier → governance proposal
+        # Foundation tier → check governance settings
         if tier == "foundation":
-            return await _create_governance_proposal(
-                supabase=supabase,
-                basket_id=basket_id,
-                user_id=user_id,
-                session_id=session_id,
-                item_type=item_type,
-                content=content,
-                item_key=item_key,
-                title=title,
-                completeness=completeness,
-            )
+            # Check workspace governance settings for auto-approval
+            auto_approve = await _check_governance_auto_approve(supabase, basket_id)
 
-        # Working/ephemeral tier → direct write
+            if auto_approve:
+                # Auto-approve: write directly
+                logger.info(f"[write_context] Auto-approving foundation write for {item_type}")
+            else:
+                # Require approval: create governance proposal
+                return await _create_governance_proposal(
+                    supabase=supabase,
+                    basket_id=basket_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    item_type=item_type,
+                    content=content,
+                    item_key=item_key,
+                    title=title,
+                    completeness=completeness,
+                )
+
+        # Direct write (working/ephemeral tier OR auto-approved foundation)
         item_data = {
             "basket_id": basket_id,
             "tier": tier,
@@ -322,13 +330,19 @@ async def write_context(
 
         logger.info(f"[write_context] Wrote {item_type} to basket {basket_id}")
 
+        # Different message for foundation vs working tier
+        if tier == "foundation":
+            message = f"Updated {item_type} (auto-approved per workspace settings)."
+        else:
+            message = f"Updated {item_type} context item."
+
         return {
             "success": True,
             "action": "written",
             "item_type": item_type,
             "tier": tier,
             "completeness_score": completeness["score"],
-            "message": f"Updated {item_type} context item."
+            "message": message
         }
 
     except Exception as e:
@@ -529,3 +543,57 @@ def _calculate_completeness(content: Dict[str, Any], field_schema: Dict[str, Any
         "filled_fields": filled_count,
         "missing_fields": missing_fields,
     }
+
+
+async def _check_governance_auto_approve(supabase, basket_id: str) -> bool:
+    """
+    Check workspace governance settings to determine if foundation tier
+    writes should be auto-approved.
+
+    Returns True if auto-approve is enabled (ep_manual_edit = 'direct').
+    Returns True by default if no settings found (permissive default).
+    """
+    try:
+        # Get workspace_id from basket
+        basket_result = (
+            supabase.table("baskets")
+            .select("workspace_id")
+            .eq("id", basket_id)
+            .single()
+            .execute()
+        )
+
+        if not basket_result.data:
+            logger.warning(f"[_check_governance_auto_approve] Basket {basket_id} not found, defaulting to auto-approve")
+            return True
+
+        workspace_id = basket_result.data.get("workspace_id")
+        if not workspace_id:
+            logger.warning(f"[_check_governance_auto_approve] No workspace_id for basket {basket_id}, defaulting to auto-approve")
+            return True
+
+        # Get workspace governance settings
+        settings_result = (
+            supabase.table("workspace_governance_settings")
+            .select("ep_manual_edit")
+            .eq("workspace_id", workspace_id)
+            .single()
+            .execute()
+        )
+
+        if not settings_result.data:
+            logger.info(f"[_check_governance_auto_approve] No governance settings for workspace {workspace_id}, defaulting to auto-approve")
+            return True
+
+        ep_manual_edit = settings_result.data.get("ep_manual_edit", "direct")
+
+        # 'direct' = auto-approve, 'proposal' = require approval, 'hybrid' = auto-approve (for now)
+        auto_approve = ep_manual_edit in ("direct", "hybrid")
+
+        logger.debug(f"[_check_governance_auto_approve] workspace={workspace_id}, ep_manual_edit={ep_manual_edit}, auto_approve={auto_approve}")
+
+        return auto_approve
+
+    except Exception as e:
+        logger.error(f"[_check_governance_auto_approve] Error checking settings: {e}, defaulting to auto-approve")
+        return True
