@@ -1,13 +1,15 @@
-"""API routes for context entries management.
+"""API routes for context items management.
 
-Context Entries provide structured, multi-modal context for work recipes.
-See: /docs/architecture/ADR_CONTEXT_ENTRIES.md
+Context Items provide structured, multi-modal context for work recipes.
+This is the unified context table supporting foundation, working, and ephemeral tiers.
+
+See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -30,7 +32,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/substrate/baskets", tags=["context-entries"])
+router = APIRouter(prefix="/substrate/baskets", tags=["context-items"])
 
 
 # ============================================================================
@@ -77,7 +79,7 @@ async def verify_workspace_access(basket_id: UUID, user: dict = Depends(verify_j
 
 
 def calculate_completeness(data: Dict[str, Any], field_schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate completeness score for a context entry."""
+    """Calculate completeness score for a context item."""
     fields = field_schema.get("fields", [])
     required_count = 0
     filled_count = 0
@@ -105,11 +107,21 @@ def calculate_completeness(data: Dict[str, Any], field_schema: Dict[str, Any]) -
     }
 
 
+def map_category_to_tier(category: str) -> str:
+    """Map schema category to context tier."""
+    tier_map = {
+        "foundation": "foundation",
+        "market": "working",
+        "insight": "working",  # Was ephemeral, but working with TTL is better
+    }
+    return tier_map.get(category, "working")
+
+
 async def resolve_asset_references(
     data: Dict[str, Any],
     field_schema: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Resolve asset:// references in entry data to actual asset info."""
+    """Resolve asset:// references in item data to actual asset info with URLs."""
     resolved = {}
     asset_fields = {
         f.get("key"): f
@@ -238,49 +250,67 @@ async def get_context_schema(
 
 
 # ============================================================================
-# Context Entry CRUD Endpoints
+# Context Item CRUD Endpoints (using context_items table)
 # ============================================================================
 
 
 @router.get("/{basket_id}/context/entries", response_model=ContextEntriesListResponse)
-async def list_context_entries(
+async def list_context_items(
     basket_id: UUID,
     role: Optional[str] = None,
+    tier: Optional[str] = None,
     state: str = "active",
     user: dict = Depends(verify_jwt),
 ):
-    """List context entries for a basket.
+    """List context items for a basket.
 
     Args:
         basket_id: Basket ID
-        role: Optional filter by anchor role
-        state: Filter by state (default: active)
+        role: Optional filter by item_type (anchor role)
+        tier: Optional filter by tier (foundation, working, ephemeral)
+        state: Filter by status (default: active)
 
     Returns:
-        List of context entries with schema info
+        List of context items with schema info
     """
     try:
         await verify_workspace_access(basket_id, user)
 
         query = (
-            supabase_admin_client.table("context_entries")
+            supabase_admin_client.table("context_items")
             .select("*, context_entry_schemas(display_name, icon, category)")
             .eq("basket_id", str(basket_id))
-            .eq("state", state)
+            .eq("status", state)
         )
 
         if role:
-            query = query.eq("anchor_role", role)
+            query = query.eq("item_type", role)
 
-        result = query.order("anchor_role").execute()
+        if tier:
+            query = query.eq("tier", tier)
 
-        # Transform to include schema info at top level
+        result = query.order("item_type").execute()
+
+        # Transform to maintain API compatibility
         entries = []
-        for entry in result.data or []:
-            schema_info = entry.pop("context_entry_schemas", {}) or {}
-            entry["schema_display_name"] = schema_info.get("display_name")
-            entry["schema_icon"] = schema_info.get("icon")
-            entry["schema_category"] = schema_info.get("category")
+        for item in result.data or []:
+            schema_info = item.pop("context_entry_schemas", {}) or {}
+            # Map new column names to old response format
+            entry = {
+                "id": item["id"],
+                "basket_id": item["basket_id"],
+                "anchor_role": item["item_type"],  # Map item_type -> anchor_role
+                "entry_key": item["item_key"],  # Map item_key -> entry_key
+                "display_name": item["title"],  # Map title -> display_name
+                "data": item["content"],  # Map content -> data
+                "completeness_score": item["completeness_score"],
+                "state": item["status"],  # Map status -> state
+                "created_at": item["created_at"],
+                "updated_at": item["updated_at"],
+                "schema_display_name": schema_info.get("display_name"),
+                "schema_icon": schema_info.get("icon"),
+                "schema_category": schema_info.get("category"),
+            }
             entries.append(entry)
 
         return {"entries": entries, "basket_id": basket_id}
@@ -288,81 +318,93 @@ async def list_context_entries(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to list context entries: {e}")
+        logger.error(f"Failed to list context items: {e}")
         raise HTTPException(status_code=500, detail="Failed to list entries")
 
 
 @router.get("/{basket_id}/context/entries/{anchor_role}", response_model=ContextEntryResponse)
-async def get_context_entry(
+async def get_context_item(
     basket_id: UUID,
     anchor_role: str,
     entry_key: Optional[str] = None,
     user: dict = Depends(verify_jwt),
 ):
-    """Get a specific context entry.
+    """Get a specific context item.
 
     Args:
         basket_id: Basket ID
-        anchor_role: Anchor role
-        entry_key: Entry key (for non-singleton roles)
+        anchor_role: Item type (anchor role)
+        entry_key: Item key (for non-singleton roles)
 
     Returns:
-        Context entry with schema info
+        Context item with schema info
     """
     try:
         await verify_workspace_access(basket_id, user)
 
         query = (
-            supabase_admin_client.table("context_entries")
+            supabase_admin_client.table("context_items")
             .select("*, context_entry_schemas(display_name, icon, category, field_schema)")
             .eq("basket_id", str(basket_id))
-            .eq("anchor_role", anchor_role)
-            .eq("state", "active")
+            .eq("item_type", anchor_role)
+            .eq("status", "active")
         )
 
         if entry_key:
-            query = query.eq("entry_key", entry_key)
+            query = query.eq("item_key", entry_key)
         else:
-            query = query.is_("entry_key", "null")
+            query = query.is_("item_key", "null")
 
         result = query.single().execute()
 
         if not result.data:
-            raise HTTPException(status_code=404, detail=f"Context entry not found: {anchor_role}")
+            raise HTTPException(status_code=404, detail=f"Context item not found: {anchor_role}")
 
-        # Transform schema info
-        schema_info = result.data.pop("context_entry_schemas", {}) or {}
-        result.data["schema_display_name"] = schema_info.get("display_name")
-        result.data["schema_icon"] = schema_info.get("icon")
-        result.data["schema_category"] = schema_info.get("category")
+        # Transform to response format
+        item = result.data
+        schema_info = item.pop("context_entry_schemas", {}) or {}
 
-        return result.data
+        return {
+            "id": item["id"],
+            "basket_id": item["basket_id"],
+            "anchor_role": item["item_type"],
+            "entry_key": item["item_key"],
+            "display_name": item["title"],
+            "data": item["content"],
+            "completeness_score": item["completeness_score"],
+            "state": item["status"],
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"],
+            "schema_display_name": schema_info.get("display_name"),
+            "schema_icon": schema_info.get("icon"),
+            "schema_category": schema_info.get("category"),
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get context entry: {e}")
+        logger.error(f"Failed to get context item: {e}")
         raise HTTPException(status_code=500, detail="Failed to get entry")
 
 
 @router.put("/{basket_id}/context/entries/{anchor_role}", response_model=ContextEntryResponse)
-async def upsert_context_entry(
+async def upsert_context_item(
     basket_id: UUID,
     anchor_role: str,
     body: ContextEntryUpdate,
     entry_key: Optional[str] = None,
     user: dict = Depends(verify_jwt),
 ):
-    """Create or update a context entry.
+    """Create or update a context item.
 
     Args:
         basket_id: Basket ID
-        anchor_role: Anchor role
-        body: Entry data
-        entry_key: Entry key (for non-singleton roles)
+        anchor_role: Item type (anchor role)
+        body: Item data
+        entry_key: Item key (for non-singleton roles)
 
     Returns:
-        Created/updated context entry
+        Created/updated context item
     """
     try:
         await verify_workspace_access(basket_id, user)
@@ -370,7 +412,7 @@ async def upsert_context_entry(
         # Validate schema exists and get field_schema
         schema_result = (
             supabase_admin_client.table("context_entry_schemas")
-            .select("field_schema, is_singleton")
+            .select("field_schema, is_singleton, category")
             .eq("anchor_role", anchor_role)
             .single()
             .execute()
@@ -381,6 +423,7 @@ async def upsert_context_entry(
 
         field_schema = schema_result.data["field_schema"]
         is_singleton = schema_result.data["is_singleton"]
+        category = schema_result.data["category"]
 
         # For singleton roles, entry_key must be null
         if is_singleton:
@@ -391,51 +434,70 @@ async def upsert_context_entry(
 
         user_id = user.get("user_id") or user.get("sub")
 
-        # Upsert entry
-        entry_data = {
+        # Map category to tier
+        tier = map_category_to_tier(category)
+
+        # Upsert item into context_items table
+        item_data = {
             "basket_id": str(basket_id),
-            "anchor_role": anchor_role,
-            "entry_key": entry_key,
-            "display_name": body.display_name,
-            "data": body.data,
+            "tier": tier,
+            "item_type": anchor_role,
+            "item_key": entry_key,
+            "title": body.display_name,
+            "content": body.data,
+            "schema_id": anchor_role,
             "completeness_score": completeness["score"],
-            "state": "active",
-            "created_by": user_id,
+            "status": "active",
+            "created_by": f"user:{user_id}",
+            "updated_by": f"user:{user_id}",
         }
 
         result = (
-            supabase_admin_client.table("context_entries")
-            .upsert(entry_data, on_conflict="basket_id,anchor_role,entry_key")
+            supabase_admin_client.table("context_items")
+            .upsert(item_data, on_conflict="basket_id,item_type,item_key")
             .execute()
         )
 
         if not result.data:
-            raise HTTPException(status_code=500, detail="Failed to save context entry")
+            raise HTTPException(status_code=500, detail="Failed to save context item")
 
-        logger.info(f"Upserted context entry {anchor_role} for basket {basket_id}")
+        logger.info(f"Upserted context item {anchor_role} for basket {basket_id}")
 
-        return result.data[0]
+        # Transform to response format
+        item = result.data[0]
+        return {
+            "id": item["id"],
+            "basket_id": item["basket_id"],
+            "anchor_role": item["item_type"],
+            "entry_key": item["item_key"],
+            "display_name": item["title"],
+            "data": item["content"],
+            "completeness_score": item["completeness_score"],
+            "state": item["status"],
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"],
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to upsert context entry: {e}")
+        logger.error(f"Failed to upsert context item: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save entry: {str(e)}")
 
 
 @router.delete("/{basket_id}/context/entries/{anchor_role}")
-async def delete_context_entry(
+async def delete_context_item(
     basket_id: UUID,
     anchor_role: str,
     entry_key: Optional[str] = None,
     user: dict = Depends(verify_jwt),
 ):
-    """Archive (soft delete) a context entry.
+    """Archive (soft delete) a context item.
 
     Args:
         basket_id: Basket ID
-        anchor_role: Anchor role
-        entry_key: Entry key (for non-singleton roles)
+        anchor_role: Item type (anchor role)
+        entry_key: Item key (for non-singleton roles)
 
     Returns:
         Success message
@@ -444,85 +506,85 @@ async def delete_context_entry(
         await verify_workspace_access(basket_id, user)
 
         query = (
-            supabase_admin_client.table("context_entries")
-            .update({"state": "archived"})
+            supabase_admin_client.table("context_items")
+            .update({"status": "archived"})
             .eq("basket_id", str(basket_id))
-            .eq("anchor_role", anchor_role)
+            .eq("item_type", anchor_role)
         )
 
         if entry_key:
-            query = query.eq("entry_key", entry_key)
+            query = query.eq("item_key", entry_key)
         else:
-            query = query.is_("entry_key", "null")
+            query = query.is_("item_key", "null")
 
         result = query.execute()
 
         if not result.data:
-            raise HTTPException(status_code=404, detail="Context entry not found")
+            raise HTTPException(status_code=404, detail="Context item not found")
 
-        logger.info(f"Archived context entry {anchor_role} for basket {basket_id}")
+        logger.info(f"Archived context item {anchor_role} for basket {basket_id}")
 
-        return {"success": True, "message": f"Context entry {anchor_role} archived"}
+        return {"success": True, "message": f"Context item {anchor_role} archived"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete context entry: {e}")
+        logger.error(f"Failed to delete context item: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete entry")
 
 
 # ============================================================================
-# Resolved Entry Endpoint (with asset URLs)
+# Resolved Item Endpoint (with asset URLs)
 # ============================================================================
 
 
 @router.get("/{basket_id}/context/entries/{anchor_role}/resolved", response_model=ContextEntryResolvedResponse)
-async def get_resolved_context_entry(
+async def get_resolved_context_item(
     basket_id: UUID,
     anchor_role: str,
     fields: Optional[str] = Query(None, description="Comma-separated field names to include"),
     entry_key: Optional[str] = None,
     user: dict = Depends(verify_jwt),
 ):
-    """Get context entry with resolved asset references.
+    """Get context item with resolved asset references.
 
     Asset fields (type=asset) that contain asset://uuid references are resolved
     to include file metadata and signed download URLs.
 
     Args:
         basket_id: Basket ID
-        anchor_role: Anchor role
+        anchor_role: Item type (anchor role)
         fields: Optional comma-separated list of fields to include
-        entry_key: Entry key (for non-singleton roles)
+        entry_key: Item key (for non-singleton roles)
 
     Returns:
-        Context entry with resolved asset references
+        Context item with resolved asset references
     """
     try:
         await verify_workspace_access(basket_id, user)
 
-        # Get entry with schema
+        # Get item with schema
         query = (
-            supabase_admin_client.table("context_entries")
+            supabase_admin_client.table("context_items")
             .select("*, context_entry_schemas(field_schema)")
             .eq("basket_id", str(basket_id))
-            .eq("anchor_role", anchor_role)
-            .eq("state", "active")
+            .eq("item_type", anchor_role)
+            .eq("status", "active")
         )
 
         if entry_key:
-            query = query.eq("entry_key", entry_key)
+            query = query.eq("item_key", entry_key)
         else:
-            query = query.is_("entry_key", "null")
+            query = query.is_("item_key", "null")
 
         result = query.single().execute()
 
         if not result.data:
-            raise HTTPException(status_code=404, detail=f"Context entry not found: {anchor_role}")
+            raise HTTPException(status_code=404, detail=f"Context item not found: {anchor_role}")
 
-        entry = result.data
-        field_schema = entry.pop("context_entry_schemas", {}).get("field_schema", {})
-        data = entry.get("data", {})
+        item = result.data
+        field_schema = item.pop("context_entry_schemas", {}).get("field_schema", {})
+        data = item.get("content", {})
 
         # Filter to requested fields if specified
         if fields:
@@ -532,14 +594,21 @@ async def get_resolved_context_entry(
         # Resolve asset references
         resolved_data = await resolve_asset_references(data, field_schema)
 
-        entry["data"] = resolved_data
-
-        return entry
+        return {
+            "id": item["id"],
+            "basket_id": item["basket_id"],
+            "anchor_role": item["item_type"],
+            "entry_key": item["item_key"],
+            "display_name": item["title"],
+            "data": resolved_data,
+            "completeness_score": item["completeness_score"],
+            "state": item["status"],
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get resolved context entry: {e}")
+        logger.error(f"Failed to get resolved context item: {e}")
         raise HTTPException(status_code=500, detail="Failed to get resolved entry")
 
 
@@ -549,18 +618,18 @@ async def get_resolved_context_entry(
 
 
 @router.get("/{basket_id}/context/entries/{anchor_role}/completeness", response_model=CompletenessResponse)
-async def get_entry_completeness(
+async def get_item_completeness(
     basket_id: UUID,
     anchor_role: str,
     entry_key: Optional[str] = None,
     user: dict = Depends(verify_jwt),
 ):
-    """Get completeness score for a context entry.
+    """Get completeness score for a context item.
 
     Args:
         basket_id: Basket ID
-        anchor_role: Anchor role
-        entry_key: Entry key (for non-singleton roles)
+        anchor_role: Item type (anchor role)
+        entry_key: Item key (for non-singleton roles)
 
     Returns:
         Completeness score and details
@@ -568,27 +637,27 @@ async def get_entry_completeness(
     try:
         await verify_workspace_access(basket_id, user)
 
-        # Get entry with schema
+        # Get item with schema
         query = (
-            supabase_admin_client.table("context_entries")
-            .select("data, context_entry_schemas(field_schema)")
+            supabase_admin_client.table("context_items")
+            .select("content, context_entry_schemas(field_schema)")
             .eq("basket_id", str(basket_id))
-            .eq("anchor_role", anchor_role)
-            .eq("state", "active")
+            .eq("item_type", anchor_role)
+            .eq("status", "active")
         )
 
         if entry_key:
-            query = query.eq("entry_key", entry_key)
+            query = query.eq("item_key", entry_key)
         else:
-            query = query.is_("entry_key", "null")
+            query = query.is_("item_key", "null")
 
         result = query.single().execute()
 
         if not result.data:
-            raise HTTPException(status_code=404, detail=f"Context entry not found: {anchor_role}")
+            raise HTTPException(status_code=404, detail=f"Context item not found: {anchor_role}")
 
         field_schema = result.data.get("context_entry_schemas", {}).get("field_schema", {})
-        data = result.data.get("data", {})
+        data = result.data.get("content", {})
 
         completeness = calculate_completeness(data, field_schema)
 
@@ -597,7 +666,7 @@ async def get_entry_completeness(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get entry completeness: {e}")
+        logger.error(f"Failed to get item completeness: {e}")
         raise HTTPException(status_code=500, detail="Failed to get completeness")
 
 
@@ -612,7 +681,7 @@ async def get_bulk_context(
     body: BulkContextRequest,
     user: dict = Depends(verify_jwt),
 ):
-    """Get multiple context entries at once.
+    """Get multiple context items at once.
 
     Useful for recipe execution to fetch all required context in one request.
 
@@ -621,7 +690,7 @@ async def get_bulk_context(
         body: Request containing list of anchor roles to fetch
 
     Returns:
-        Dictionary of entries keyed by anchor_role, plus list of missing roles
+        Dictionary of items keyed by anchor_role, plus list of missing roles
     """
     try:
         await verify_workspace_access(basket_id, user)
@@ -629,15 +698,30 @@ async def get_bulk_context(
         roles = body.anchor_roles
 
         result = (
-            supabase_admin_client.table("context_entries")
+            supabase_admin_client.table("context_items")
             .select("*")
             .eq("basket_id", str(basket_id))
-            .in_("anchor_role", roles)
-            .eq("state", "active")
+            .in_("item_type", roles)
+            .eq("status", "active")
             .execute()
         )
 
-        entries = {entry["anchor_role"]: entry for entry in result.data or []}
+        # Transform and key by item_type (anchor_role)
+        entries = {}
+        for item in result.data or []:
+            entries[item["item_type"]] = {
+                "id": item["id"],
+                "basket_id": item["basket_id"],
+                "anchor_role": item["item_type"],
+                "entry_key": item["item_key"],
+                "display_name": item["title"],
+                "data": item["content"],
+                "completeness_score": item["completeness_score"],
+                "state": item["status"],
+                "created_at": item["created_at"],
+                "updated_at": item["updated_at"],
+            }
+
         missing_roles = [role for role in roles if role not in entries]
 
         return {

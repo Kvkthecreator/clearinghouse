@@ -12,14 +12,14 @@ Architecture: Async classification after minimal upload
 DEPRECATION NOTICE (2025-12-03):
 =================================
 LLM classification is now ONLY used for work output files (agent-produced).
-User uploads are classified by attachment to context entries instead.
+User uploads are classified by attachment to context items instead.
 
 For user uploads:
 - Set source="user" to skip LLM classification
-- Use context_entry_id to link asset to structured context
+- Use context_item_id to link asset to structured context
 - Asset type defaults to "other" for standalone uploads
 
-See: /docs/architecture/ADR_CONTEXT_ENTRIES.md#de-wiring-legacy-classification-system
+See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
 """
 
 import json
@@ -114,8 +114,8 @@ class AssetClassificationService:
 
         DEPRECATION NOTE (2025-12-03):
             For user uploads (source="user"), LLM classification is skipped.
-            Classification is determined by attachment to context_entries instead.
-            See: /docs/architecture/ADR_CONTEXT_ENTRIES.md
+            Classification is determined by attachment to context_items instead.
+            See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
         """
         # Skip LLM classification for user uploads (2025-12-03)
         if source == "user":

@@ -6,7 +6,9 @@ import { createRouteHandlerClient } from '@/lib/supabase/clients';
  * GET /api/projects/[id]/context/anchors
  *
  * Fetches anchor status for a project's basket.
- * Now reads from context_entries table (new schema-driven system).
+ * Reads from context_items table (unified context architecture).
+ *
+ * See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
  *
  * Returns:
  * - anchors: Array of AnchorStatusSummary
@@ -68,42 +70,63 @@ export async function GET(
       );
     }
 
-    // Fetch context entries from new schema-driven table
-    const { data: contextEntries, error: entriesError } = await supabase
-      .from('context_entries')
-      .select('id, anchor_role, entry_key, data, completeness_score, state, refresh_policy, updated_at, created_at')
+    // Fetch context items from unified context_items table
+    const { data: contextItems, error: itemsError } = await supabase
+      .from('context_items')
+      .select('id, item_type, item_key, content, completeness_score, status, tier, expires_at, updated_at, created_at')
       .eq('basket_id', basketId)
-      .eq('state', 'active');
+      .eq('status', 'active');
 
-    if (entriesError) {
-      console.error('[ANCHORS API] Error fetching context entries:', entriesError);
+    if (itemsError) {
+      console.error('[ANCHORS API] Error fetching context items:', itemsError);
       return NextResponse.json(
-        { detail: 'Failed to fetch context entries' },
+        { detail: 'Failed to fetch context items' },
         { status: 500 }
       );
     }
 
-    // Transform context_entries to anchor format expected by frontend
-    const anchors = (contextEntries || []).map(entry => {
-      // Determine lifecycle based on completeness
-      const hasContent = entry.completeness_score && entry.completeness_score > 0;
+    // Fetch schema info for TTL-based staleness checking
+    const { data: schemas } = await supabase
+      .from('context_entry_schemas')
+      .select('anchor_role, field_schema');
 
-      // Check if stale (for insight roles with refresh_policy)
+    const schemaMap = new Map(
+      (schemas || []).map(s => [s.anchor_role, s.field_schema])
+    );
+
+    // Transform context_items to anchor format expected by frontend
+    const anchors = (contextItems || []).map(item => {
+      // Determine lifecycle based on completeness
+      const hasContent = item.completeness_score && item.completeness_score > 0;
+
+      // Check if stale (for working tier items with TTL in schema)
       let isStale = false;
-      if (entry.refresh_policy?.ttl_hours && entry.updated_at) {
-        const updatedAt = new Date(entry.updated_at).getTime();
-        const ttlMs = entry.refresh_policy.ttl_hours * 60 * 60 * 1000;
-        isStale = Date.now() - updatedAt > ttlMs;
+      if (item.tier === 'working' && item.updated_at) {
+        const fieldSchema = schemaMap.get(item.item_type);
+        const refreshTtlHours = fieldSchema?.refresh_ttl_hours;
+
+        if (refreshTtlHours) {
+          const updatedAt = new Date(item.updated_at).getTime();
+          const ttlMs = refreshTtlHours * 60 * 60 * 1000;
+          isStale = Date.now() - updatedAt > ttlMs;
+        }
+      }
+
+      // Check expires_at for ephemeral tier
+      if (item.tier === 'ephemeral' && item.expires_at) {
+        const expiresAt = new Date(item.expires_at).getTime();
+        isStale = Date.now() > expiresAt;
       }
 
       return {
-        anchor_key: entry.anchor_role,
-        entry_key: entry.entry_key,
+        anchor_key: item.item_type,
+        entry_key: item.item_key,
         lifecycle: isStale ? 'stale' : (hasContent ? 'approved' : 'draft'),
-        label: ROLE_LABELS[entry.anchor_role] || entry.anchor_role,
+        label: ROLE_LABELS[item.item_type] || item.item_type,
         is_stale: isStale,
-        last_updated_at: entry.updated_at,
-        completeness_score: entry.completeness_score,
+        last_updated_at: item.updated_at,
+        completeness_score: item.completeness_score,
+        tier: item.tier,
       };
     });
 

@@ -13,11 +13,11 @@ To add a new job type:
 2. Register it with @JobHandlerRegistry.register('job_type')
 3. The worker will automatically route jobs to your handler
 
-Context Entries Integration (2025-12-03):
+Context Items Integration (2025-12-04):
 - Recipes can specify `context_required` in payload
 - Context is provisioned before work ticket creation
 - Provisioned context stored in work_ticket metadata
-- See: /docs/architecture/ADR_CONTEXT_ENTRIES.md
+- See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
 """
 
 import logging

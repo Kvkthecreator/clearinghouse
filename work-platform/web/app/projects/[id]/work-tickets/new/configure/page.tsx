@@ -61,22 +61,23 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     redirect(`/projects/${projectId}/work-tickets/new`);
   }
 
-  // Fetch context entries for this basket (new schema-driven system)
-  // Context entries replace legacy blocks for work recipe context management
-  const { data: contextEntries } = await supabase
-    .from('context_entries')
-    .select('id, anchor_role, entry_key, data, completeness_score, state, updated_at')
+  // Fetch context items for this basket (unified context architecture)
+  // See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
+  const { data: contextItems } = await supabase
+    .from('context_items')
+    .select('id, item_type, item_key, content, completeness_score, status, tier, updated_at')
     .eq('basket_id', project.basket_id)
-    .eq('state', 'active');
+    .eq('status', 'active');
 
   // Transform to contextAnchors format for RecipeConfigureClient
-  // An entry is considered "approved" if it has data (completeness > 0)
-  const contextAnchors = (contextEntries || []).map(entry => ({
-    anchor_key: entry.anchor_role,
-    entry_key: entry.entry_key,
-    lifecycle: (entry.completeness_score && entry.completeness_score > 0) ? 'approved' : 'pending',
-    updated_at: entry.updated_at,
-    completeness_score: entry.completeness_score,
+  // An item is considered "approved" if it has data (completeness > 0)
+  const contextAnchors = (contextItems || []).map(item => ({
+    anchor_key: item.item_type,
+    entry_key: item.item_key,
+    lifecycle: (item.completeness_score && item.completeness_score > 0) ? 'approved' : 'pending',
+    updated_at: item.updated_at,
+    completeness_score: item.completeness_score,
+    tier: item.tier,
   }));
 
   // Transform database recipe to frontend format

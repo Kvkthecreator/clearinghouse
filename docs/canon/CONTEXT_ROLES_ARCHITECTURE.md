@@ -5,27 +5,27 @@
 **Status**: Canonical (Partially Superseded)
 **Category**: Substrate Architecture
 **Related**: ANCHOR_SEEDING_ARCHITECTURE.md, TERMINOLOGY_GLOSSARY.md
-**Superseded By**: [ADR_CONTEXT_ENTRIES.md](../architecture/ADR_CONTEXT_ENTRIES.md) for work recipe context
+**Superseded By**: [ADR_CONTEXT_ITEMS_UNIFIED.md](../architecture/ADR_CONTEXT_ITEMS_UNIFIED.md) for work recipe context
 
 ---
 
 > **Important**: This document describes the block-based anchor role system. For work recipe context,
-> see [ADR_CONTEXT_ENTRIES.md](../architecture/ADR_CONTEXT_ENTRIES.md) which introduces structured
-> Context Entries as the primary context management system (December 2025).
+> see [ADR_CONTEXT_ITEMS_UNIFIED.md](../architecture/ADR_CONTEXT_ITEMS_UNIFIED.md) which introduces
+> the unified Context Items architecture (December 2025).
 
 ---
 
 ## Executive Summary
 
-This document establishes the architecture for **Context Roles** - the system by which blocks are tagged with strategic significance. As of December 2025, this system is being superseded by **Context Entries** for work recipe context, while blocks continue to serve knowledge extraction and RAG use cases.
+This document establishes the architecture for **Context Roles** - the system by which blocks are tagged with strategic significance. As of December 2025, this system has been superseded by **Context Items** for work recipe context, while blocks continue to serve knowledge extraction and RAG use cases.
 
 ### Key Decisions (Updated December 2025)
 
 1. **`basket_anchors` table**: **DEPRECATED** - No production data, superseded by `blocks.anchor_role`
 2. **Context Roles on blocks**: The `anchor_role` column remains for knowledge categorization
-3. **Work recipe context**: Transitioning to structured `context_entries` table (see ADR)
+3. **Work recipe context**: Now uses unified `context_items` table (see ADR_CONTEXT_ITEMS_UNIFIED.md)
 4. **Blocks remain for**: RAG, semantic search, knowledge extraction, audit trails
-5. **Refresh policies**: Moving to context entry level, not block level
+5. **Refresh policies**: Managed at context item level with tier-based governance
 
 ---
 
