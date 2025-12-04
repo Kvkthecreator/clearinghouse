@@ -412,7 +412,7 @@ export default function ContextEntriesPanel({
 function LastUpdatedBadge({ entry }: { entry: ContextEntry }) {
   // Parse the updated_by or created_by field
   // Format: 'user:{id}' or 'agent:{type}'
-  const updatedBy = (entry as any).updated_by || (entry as any).created_by;
+  const updatedBy = entry.updated_by || entry.created_by;
 
   if (!updatedBy) return null;
 

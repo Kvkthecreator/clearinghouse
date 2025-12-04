@@ -53,6 +53,8 @@ export interface ContextEntry {
   data: Record<string, unknown>;
   completeness_score?: number;
   state: 'active' | 'archived';
+  created_by?: string;  // 'user:{id}' or 'agent:{type}'
+  updated_by?: string;  // 'user:{id}' or 'agent:{type}'
   created_at: string;
   updated_at: string;
 }
@@ -154,9 +156,10 @@ export function useContextEntries(basketId: string, options: UseContextEntriesOp
       setLoading(true);
       setError(null);
 
-      let url = `/api/substrate/baskets/${basketId}/context/entries`;
+      // Use /context/items endpoint (direct Supabase query, includes created_by/updated_by)
+      let url = `/api/substrate/baskets/${basketId}/context/items`;
       if (anchorRole) {
-        url = `/api/substrate/baskets/${basketId}/context/entries/${anchorRole}`;
+        url += `?item_type=${encodeURIComponent(anchorRole)}`;
       }
 
       const response = await fetch(url);
@@ -175,15 +178,9 @@ export function useContextEntries(basketId: string, options: UseContextEntriesOp
       }
 
       const data = await response.json();
-
-      // Handle single entry vs list
-      if (anchorRole) {
-        setEntries([data]);
-        return [data];
-      } else {
-        setEntries(data.entries || []);
-        return data.entries;
-      }
+      const entriesList = data.entries || [];
+      setEntries(entriesList);
+      return entriesList;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);

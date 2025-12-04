@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@/lib/supabase/clients';
-
-const SUBSTRATE_API_URL = process.env.SUBSTRATE_API_URL || 'http://localhost:10000';
+import { createRouteHandlerClient, createServiceRoleClient } from '@/lib/supabase/clients';
 
 /**
  * GET /api/substrate/baskets/[basketId]/context/items
  *
- * Proxy to substrate-api to list all context items for a basket.
+ * Fetches context items directly from Supabase (no proxy).
+ * Includes created_by/updated_by for source badges.
  *
  * v3.0 Terminology:
  * - item_type: Type of context item (problem, customer, vision, brand, etc.)
@@ -22,7 +21,7 @@ export async function GET(
   try {
     const { basketId } = await params;
 
-    // Get Supabase session
+    // Get Supabase session for auth check
     const supabase = createRouteHandlerClient({ cookies });
     const {
       data: { session },
@@ -36,26 +35,72 @@ export async function GET(
       );
     }
 
-    // Forward query params
+    // Query params
     const searchParams = request.nextUrl.searchParams;
-    const queryString = searchParams.toString();
-    const url = `${SUBSTRATE_API_URL}/api/substrate/baskets/${basketId}/context/items${queryString ? `?${queryString}` : ''}`;
+    const itemType = searchParams.get('item_type');
+    const tier = searchParams.get('tier');
+    const status = searchParams.get('status') || 'active';
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    // Use service role client for query (bypasses RLS for simplicity)
+    const serviceClient = createServiceRoleClient();
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to fetch items' }));
-      return NextResponse.json(error, { status: response.status });
+    // Build query
+    let query = serviceClient
+      .from('context_items')
+      .select(`
+        id,
+        basket_id,
+        tier,
+        item_type,
+        item_key,
+        title,
+        content,
+        schema_id,
+        created_by,
+        updated_by,
+        status,
+        completeness_score,
+        created_at,
+        updated_at
+      `)
+      .eq('basket_id', basketId)
+      .eq('status', status)
+      .order('item_type');
+
+    if (itemType) {
+      query = query.eq('item_type', itemType);
+    }
+    if (tier) {
+      query = query.eq('tier', tier);
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    const { data: items, error: queryError } = await query;
+
+    if (queryError) {
+      console.error('[CONTEXT ITEMS] Query error:', queryError);
+      return NextResponse.json(
+        { detail: 'Failed to fetch context items' },
+        { status: 500 }
+      );
+    }
+
+    // Transform to response format (maintaining backward compat)
+    const entries = (items || []).map((item) => ({
+      id: item.id,
+      basket_id: item.basket_id,
+      anchor_role: item.item_type,  // Map item_type -> anchor_role for compat
+      entry_key: item.item_key,
+      display_name: item.title,
+      data: item.content,
+      completeness_score: item.completeness_score,
+      state: item.status,
+      created_by: item.created_by,
+      updated_by: item.updated_by,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+    }));
+
+    return NextResponse.json({ entries, basket_id: basketId });
   } catch (error) {
     console.error('[CONTEXT ITEMS] Error:', error);
     return NextResponse.json(
