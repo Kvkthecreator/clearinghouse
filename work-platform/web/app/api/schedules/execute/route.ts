@@ -10,8 +10,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/clients";
 
-const CRON_SECRET = process.env.CRON_SECRET;
-
 interface WorkRecipe {
   id: string;
   slug: string;
@@ -40,7 +38,16 @@ export async function POST(request: NextRequest) {
   try {
     // Verify cron secret
     const authHeader = request.headers.get("authorization");
-    if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
+    const cronSecret = process.env.CRON_SECRET;
+
+    console.log("[SCHEDULE EXECUTOR] Auth check:", {
+      hasSecret: !!cronSecret,
+      secretLength: cronSecret?.length,
+      hasAuthHeader: !!authHeader,
+      authHeaderPrefix: authHeader?.substring(0, 10),
+    });
+
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json(
         { detail: "Unauthorized" },
         { status: 401 }
