@@ -6,7 +6,7 @@ import { createBrowserClient } from "@/lib/supabase/clients";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { ArrowLeft, Download, RefreshCw, CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, FileText, Calendar } from "lucide-react";
+import { ArrowLeft, Download, RefreshCw, CheckCircle2, XCircle, Loader2, Clock, AlertTriangle, FileText, Calendar, Bot, User } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +27,7 @@ interface WorkTicket {
   id: string;
   status: string;
   agent_type: string;
+  source: string;  // 'manual' | 'thinking_partner' | 'schedule' | 'api'
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -182,29 +183,36 @@ export default function TicketTrackingClient({
   // Determine if this is a problematic execution
   const isProblematicExecution = isCompleted && !hasOutputs && !isFailed;
 
+  // Source label helper
+  const getSourceLabel = () => {
+    switch (ticket.source) {
+      case 'thinking_partner':
+        return { label: 'Thinking Partner', icon: Bot, color: 'text-primary' };
+      case 'schedule':
+        return { label: 'Scheduled', icon: Calendar, color: 'text-blue-600' };
+      case 'manual':
+        return { label: 'Manual', icon: User, color: 'text-muted-foreground' };
+      default:
+        return { label: ticket.source || 'Unknown', icon: User, color: 'text-muted-foreground' };
+    }
+  };
+  const sourceInfo = getSourceLabel();
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
-      {/* Header */}
+    <div className="mx-auto max-w-3xl space-y-4 p-6">
+      {/* Header - Compact */}
       <div className="space-y-2">
         <Link
           href={`/projects/${projectId}/work-tickets-view`}
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-2"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back to Work Tickets
         </Link>
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold text-foreground">{recipeName}</h1>
-              {scheduleInfo && (
-                <Badge variant="outline" className="text-primary border-primary/30 bg-primary/5">
-                  <Calendar className="h-3 w-3 mr-1" />
-                  Scheduled
-                </Badge>
-              )}
-            </div>
-            <p className="text-muted-foreground mt-1">{projectName}</p>
+            <h1 className="text-2xl font-bold text-foreground">{recipeName}</h1>
+            <p className="text-sm text-muted-foreground">{projectName}</p>
           </div>
           <div className="flex items-center gap-2">
             {getStatusIcon()}
@@ -256,183 +264,112 @@ export default function TicketTrackingClient({
         </Card>
       )}
 
-      {/* Main Content Grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Column: Outputs & Progress */}
-        <div className="lg:col-span-2 space-y-6">
-
-          {/* Agent Activity - For running tickets: show live progress from Realtime */}
-          {isRunning && (
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                Agent Activity
-              </h2>
-              <RealtimeProgressList currentTodos={ticket.metadata?.current_todos} />
-            </Card>
-          )}
-
-          {/* Agent Activity - For completed tickets: show execution history */}
-          {!isRunning && hasExecutionSteps && (
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-success" />
-                Agent Activity
-              </h2>
-              <p className="text-sm text-muted-foreground mb-4">
-                Steps completed by the agent during execution:
-              </p>
-              <div className="space-y-2">
-                {ticket.metadata.final_todos.map((todo: any, index: number) => (
-                  <div key={index} className="flex items-center gap-2 text-sm">
-                    <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
-                    <span className="text-foreground">
-                      {todo.content || todo.activeForm || `Step ${index + 1}`}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* Error Message */}
-          {isFailed && ticket.error_message && (
-            <Card className="p-6 border-surface-danger-border bg-surface-danger">
-              <h2 className="text-lg font-semibold mb-2 text-destructive flex items-center gap-2">
-                <XCircle className="h-5 w-5" />
-                Execution Failed
-              </h2>
-              <p className="text-sm text-destructive-foreground font-mono bg-destructive/10 p-3 rounded">
-                {ticket.error_message}
-              </p>
-            </Card>
-          )}
-
-          {/* Work Outputs */}
-          {hasOutputs ? (
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Work Outputs ({ticket.work_outputs.length})</h2>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                >
-                  <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-                </Button>
-              </div>
-              <div className="space-y-4">
-                {ticket.work_outputs.map((output) => (
-                  <OutputCard key={output.id} output={output} basketId={ticket.basket_id} projectId={projectId} />
-                ))}
-              </div>
-            </Card>
-          ) : isCompleted && (
-            <Card className="p-6 border-surface-warning-border bg-surface-warning">
-              <h2 className="text-lg font-semibold mb-3 text-warning-foreground">No Work Outputs</h2>
-              <div className="space-y-3 text-sm text-warning-foreground/90">
-                <p>
-                  The agent completed execution but did not generate any work outputs.
-                  This is unexpected for a {ticket.agent_type} agent working on a {recipeName} task.
-                </p>
-                <div className="bg-warning/10 border border-surface-warning-border rounded p-3">
-                  <p className="font-medium mb-2 text-warning-foreground">Expected Output:</p>
-                  <ul className="list-disc list-inside space-y-1 text-xs">
-                    {recipeParams.output_format && (
-                      <li>Format: {recipeParams.output_format.toUpperCase()} file</li>
-                    )}
-                    <li>Generation method: Skill tool (professional file generation)</li>
-                    <li>Output type: report_draft or final_report</li>
-                  </ul>
-                </div>
-                <p className="text-xs text-warning-foreground/70">
-                  This may indicate a bug in the agent execution or a missing emit_work_output call.
-                  Check the agent logs for more details.
-                </p>
-              </div>
-            </Card>
-          )}
-        </div>
-
-        {/* Right Column: Summary */}
-        <div className="space-y-6">
-          {/* Execution Summary - Consolidated info */}
-          <Card className="p-6">
-            <h2 className="text-lg font-semibold mb-4">Summary</h2>
-            <div className="space-y-4">
-              {/* Key metrics */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-muted/50 rounded-lg">
-                  <p className={cn(
-                    "text-2xl font-bold",
-                    hasOutputs ? "text-success" : "text-muted-foreground"
-                  )}>
-                    {ticket.work_outputs?.length || 0}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Outputs</p>
-                </div>
-                <div className="text-center p-3 bg-muted/50 rounded-lg">
-                  <p className="text-2xl font-bold text-foreground font-mono">
-                    {formatDuration() || '—'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Duration</p>
-                </div>
-              </div>
-
-              {/* Task description */}
-              {taskDescription && (
-                <div className="pt-3 border-t border-border">
-                  <p className="text-xs text-muted-foreground mb-1">Task</p>
-                  <p className="text-sm text-foreground">{taskDescription}</p>
-                </div>
-              )}
-
-              {/* Timeline (compact) */}
-              <div className="pt-3 border-t border-border space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Created</span>
-                  <span className="text-foreground">{new Date(ticket.created_at).toLocaleDateString()}</span>
-                </div>
-                {ticket.completed_at && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Completed</span>
-                    <span className="text-foreground">{new Date(ticket.completed_at).toLocaleDateString()}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Agent type badge */}
-              <div className="pt-3 border-t border-border">
-                <Badge variant="outline" className="capitalize">
-                  {ticket.agent_type} agent
-                </Badge>
-              </div>
+      {/* Single Card Layout */}
+      <Card className="p-6">
+        {/* Summary Bar - Compact metrics inline */}
+        <div className="flex items-center justify-between pb-4 border-b border-border mb-4">
+          <div className="flex items-center gap-4">
+            {/* Source badge */}
+            <div className={cn("flex items-center gap-1.5 text-sm", sourceInfo.color)}>
+              <sourceInfo.icon className="h-4 w-4" />
+              <span>{sourceInfo.label}</span>
             </div>
-          </Card>
 
-          {/* Schedule Info (if triggered by schedule) */}
-          {scheduleInfo && (
-            <Card className="p-6 border-primary/20 bg-primary/5">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-primary" />
-                Scheduled Run
-              </h2>
-              <div className="space-y-2 text-sm">
-                <p className="text-foreground">
-                  {FREQUENCY_LABELS[scheduleInfo.frequency] || scheduleInfo.frequency} on {DAY_NAMES[scheduleInfo.day_of_week]}s
-                </p>
-                <Link href={`/projects/${projectId}/schedules`}>
-                  <Button variant="outline" size="sm" className="w-full mt-2">
-                    <Calendar className="h-4 w-4 mr-2" />
-                    View Schedule
-                  </Button>
-                </Link>
-              </div>
-            </Card>
-          )}
+            {/* Schedule badge if applicable */}
+            {scheduleInfo && (
+              <Badge variant="outline" className="text-blue-600 border-blue-600/30 bg-blue-50">
+                <Calendar className="h-3 w-3 mr-1" />
+                {FREQUENCY_LABELS[scheduleInfo.frequency] || scheduleInfo.frequency}
+              </Badge>
+            )}
+
+            {/* Agent type */}
+            <Badge variant="outline" className="capitalize">
+              {ticket.agent_type}
+            </Badge>
+          </div>
+
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <span>{ticket.work_outputs?.length || 0} outputs</span>
+            <span>{formatDuration() || '—'}</span>
+            <span>{new Date(ticket.created_at).toLocaleDateString()}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            </Button>
+          </div>
         </div>
-      </div>
+
+        {/* Agent Activity - For running tickets */}
+        {isRunning && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              Agent Activity
+            </h3>
+            <RealtimeProgressList currentTodos={ticket.metadata?.current_todos} />
+          </div>
+        )}
+
+        {/* Agent Activity - For completed tickets */}
+        {!isRunning && hasExecutionSteps && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              Completed Steps
+            </h3>
+            <div className="space-y-1">
+              {ticket.metadata.final_todos.slice(0, 5).map((todo: any, index: number) => (
+                <div key={index} className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <CheckCircle2 className="h-3 w-3 text-success flex-shrink-0" />
+                  <span className="truncate">{todo.content || todo.activeForm || `Step ${index + 1}`}</span>
+                </div>
+              ))}
+              {ticket.metadata.final_todos.length > 5 && (
+                <p className="text-xs text-muted-foreground pl-5">
+                  +{ticket.metadata.final_todos.length - 5} more steps
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {isFailed && ticket.error_message && (
+          <div className="mb-4 p-3 rounded bg-destructive/10 border border-destructive/20">
+            <h3 className="text-sm font-medium text-destructive flex items-center gap-2 mb-1">
+              <XCircle className="h-4 w-4" />
+              Execution Failed
+            </h3>
+            <p className="text-xs text-destructive-foreground font-mono">
+              {ticket.error_message}
+            </p>
+          </div>
+        )}
+
+        {/* Work Outputs */}
+        {hasOutputs ? (
+          <div>
+            <h3 className="text-sm font-medium mb-3">Work Outputs ({ticket.work_outputs.length})</h3>
+            <div className="space-y-3">
+              {ticket.work_outputs.map((output) => (
+                <OutputCard key={output.id} output={output} basketId={ticket.basket_id} projectId={projectId} />
+              ))}
+            </div>
+          </div>
+        ) : isCompleted && (
+          <div className="p-3 rounded bg-yellow-500/10 border border-yellow-500/20">
+            <h3 className="text-sm font-medium text-yellow-700 mb-1">No Work Outputs</h3>
+            <p className="text-xs text-yellow-600">
+              The agent completed but did not generate outputs. This may indicate an execution issue.
+            </p>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

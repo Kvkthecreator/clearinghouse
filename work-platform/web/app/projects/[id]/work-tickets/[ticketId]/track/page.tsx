@@ -33,6 +33,7 @@ export default async function TicketTrackingPage({ params }: PageProps) {
       id,
       status,
       agent_type,
+      source,
       created_at,
       started_at,
       completed_at,
