@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * ContextEntriesPanel - Display context entries organized by category
+ * ContextEntriesPanel - Display context entries with inline content visibility
  *
- * Shows:
- * - Foundation context (problem, customer, vision, brand)
- * - Market context (competitors)
- * - Insight context (trend_digest, competitor_snapshot)
+ * Refactored for TP sidebar integration:
+ * - Inline content display (not just previews)
+ * - Expandable/collapsible cards
+ * - "Last updated by" badges (user vs agent)
+ * - Realtime updates via Supabase
+ * - Edit button opens modal (viewing is inline)
  *
- * Each entry shows completeness and allows editing via ContextEntryEditor.
+ * See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -18,6 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import {
   Plus,
   Pencil,
+  ChevronDown,
   ChevronRight,
   CheckCircle,
   AlertCircle,
@@ -30,6 +33,8 @@ import {
   BarChart3,
   Loader2,
   RefreshCw,
+  User,
+  Bot,
 } from 'lucide-react';
 import {
   useContextSchemas,
@@ -37,6 +42,7 @@ import {
   type ContextEntrySchema,
   type ContextEntry,
 } from '@/hooks/useContextEntries';
+import { useContextItemsRealtime } from '@/hooks/useTPRealtime';
 import ContextEntryEditor from './ContextEntryEditor';
 
 // Icon mapping for anchor roles
@@ -72,7 +78,7 @@ const CATEGORY_CONFIG = {
 interface ContextEntriesPanelProps {
   projectId: string;
   basketId: string;
-  initialAnchorRole?: string; // Optional: auto-open editor for this role on mount
+  initialAnchorRole?: string;
 }
 
 export default function ContextEntriesPanel({
@@ -97,12 +103,33 @@ export default function ContextEntriesPanel({
     getEntryByRole,
   } = useContextEntries(basketId);
 
+  // Realtime updates
+  useContextItemsRealtime(basketId, () => {
+    refetchEntries();
+  });
+
+  // Expanded state for cards
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+
   // Editor modal state
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingSchema, setEditingSchema] = useState<ContextEntrySchema | null>(null);
   const [editingEntry, setEditingEntry] = useState<ContextEntry | null>(null);
   const [editingEntryKey, setEditingEntryKey] = useState<string | undefined>();
   const [initialRoleHandled, setInitialRoleHandled] = useState(false);
+
+  // Toggle card expansion
+  const toggleExpanded = (roleKey: string) => {
+    setExpandedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleKey)) {
+        next.delete(roleKey);
+      } else {
+        next.add(roleKey);
+      }
+      return next;
+    });
+  };
 
   // Open editor for a schema
   const openEditor = (schema: ContextEntrySchema, entry?: ContextEntry, entryKey?: string) => {
@@ -242,52 +269,98 @@ export default function ContextEntriesPanel({
                 const Icon = ROLE_ICONS[schema.anchor_role] || AlertCircle;
                 const hasContent = entry && Object.keys(entry.data).length > 0;
                 const isAgentProduced = schema.field_schema.agent_produced;
+                const isExpanded = expandedCards.has(schema.anchor_role);
 
                 return (
                   <Card
                     key={schema.anchor_role}
-                    className={`p-4 cursor-pointer hover:bg-muted/50 transition-colors ${
+                    className={`overflow-hidden transition-all ${
                       hasContent ? '' : 'border-dashed'
                     }`}
-                    onClick={() => openEditor(schema, entry || undefined)}
                   >
-                    <div className="flex items-center gap-4">
-                      {/* Icon */}
-                      <div
-                        className={`p-2 rounded-lg ${
-                          hasContent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-                        }`}
-                      >
-                        <Icon className="h-5 w-5" />
-                      </div>
+                    {/* Card header - always visible */}
+                    <div
+                      className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => hasContent && toggleExpanded(schema.anchor_role)}
+                    >
+                      <div className="flex items-center gap-4">
+                        {/* Icon */}
+                        <div
+                          className={`p-2 rounded-lg ${
+                            hasContent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </div>
 
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{schema.display_name}</span>
-                          {isAgentProduced && (
-                            <Badge variant="secondary" className="text-xs">
-                              Agent
-                            </Badge>
+                        {/* Title and meta */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">{schema.display_name}</span>
+                            {isAgentProduced && (
+                              <Badge variant="secondary" className="text-xs">
+                                Agent
+                              </Badge>
+                            )}
+                            {/* Last updated by badge */}
+                            {entry && (
+                              <LastUpdatedBadge entry={entry} />
+                            )}
+                          </div>
+                          {!hasContent && (
+                            <p className="text-sm text-muted-foreground truncate">
+                              {schema.description}
+                            </p>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {hasContent
-                            ? getPreviewText(entry.data, schema)
-                            : schema.description}
-                        </p>
-                      </div>
 
-                      {/* Status */}
-                      <div className="flex items-center gap-2">
-                        {hasContent ? (
-                          <CheckCircle className="h-5 w-5 text-green-500" />
-                        ) : (
-                          <Plus className="h-5 w-5 text-muted-foreground" />
-                        )}
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        {/* Actions */}
+                        <div className="flex items-center gap-2">
+                          {hasContent ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditor(schema, entry);
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditor(schema);
+                              }}
+                            >
+                              <Plus className="h-4 w-4 mr-1" />
+                              Add
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
+
+                    {/* Expanded content */}
+                    {hasContent && isExpanded && (
+                      <div className="px-4 pb-4 border-t border-border pt-4">
+                        <ContextContentDisplay
+                          entry={entry}
+                          schema={schema}
+                        />
+                      </div>
+                    )}
                   </Card>
                 );
               })}
@@ -334,27 +407,96 @@ export default function ContextEntriesPanel({
 }
 
 /**
- * Get preview text from entry data based on schema
+ * Badge showing who last updated the entry
  */
-function getPreviewText(data: Record<string, unknown>, schema: ContextEntrySchema): string {
+function LastUpdatedBadge({ entry }: { entry: ContextEntry }) {
+  // Parse the updated_by or created_by field
+  // Format: 'user:{id}' or 'agent:{type}'
+  const updatedBy = (entry as any).updated_by || (entry as any).created_by;
+
+  if (!updatedBy) return null;
+
+  const isAgent = updatedBy.startsWith('agent:');
+  const agentType = isAgent ? updatedBy.replace('agent:', '') : null;
+
+  return (
+    <Badge
+      variant="outline"
+      className="text-xs gap-1 font-normal"
+    >
+      {isAgent ? (
+        <>
+          <Bot className="h-3 w-3" />
+          <span>{agentType || 'Agent'}</span>
+        </>
+      ) : (
+        <>
+          <User className="h-3 w-3" />
+          <span>You</span>
+        </>
+      )}
+    </Badge>
+  );
+}
+
+/**
+ * Display the actual content of a context entry
+ */
+function ContextContentDisplay({
+  entry,
+  schema
+}: {
+  entry: ContextEntry;
+  schema: ContextEntrySchema;
+}) {
   const fields = schema.field_schema.fields;
+  const data = entry.data;
 
-  // Try to get text from the first text/longtext field
-  for (const field of fields) {
-    if (field.type === 'text' || field.type === 'longtext') {
-      const value = data[field.key];
-      if (typeof value === 'string' && value.trim()) {
-        return value.length > 100 ? value.slice(0, 100) + '...' : value;
-      }
-    }
-  }
+  return (
+    <div className="space-y-4">
+      {fields.map((field) => {
+        const value = data[field.key];
 
-  // Fallback to field count
-  const filledCount = Object.keys(data).filter((k) => {
-    const val = data[k];
-    if (Array.isArray(val)) return val.length > 0;
-    return val !== null && val !== undefined && val !== '';
-  }).length;
+        // Skip empty fields
+        if (!value || (Array.isArray(value) && value.length === 0)) {
+          return null;
+        }
 
-  return `${filledCount} of ${fields.length} fields filled`;
+        return (
+          <div key={field.key} className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {field.label}
+            </label>
+            <div className="text-sm">
+              {field.type === 'array' && Array.isArray(value) ? (
+                <div className="flex flex-wrap gap-1">
+                  {value.map((item, idx) => (
+                    <Badge key={idx} variant="secondary" className="text-xs">
+                      {String(item)}
+                    </Badge>
+                  ))}
+                </div>
+              ) : field.type === 'longtext' ? (
+                <p className="whitespace-pre-wrap text-foreground leading-relaxed">
+                  {String(value)}
+                </p>
+              ) : field.type === 'asset' && typeof value === 'string' && value.startsWith('asset://') ? (
+                <Badge variant="outline" className="text-xs">
+                  📎 {value.replace('asset://', '').slice(0, 8)}...
+                </Badge>
+              ) : (
+                <p className="text-foreground">{String(value)}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Timestamps */}
+      <div className="pt-2 border-t border-border/50 text-xs text-muted-foreground">
+        Updated {new Date(entry.updated_at).toLocaleDateString()} at{' '}
+        {new Date(entry.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      </div>
+    </div>
+  );
 }
