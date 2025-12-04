@@ -247,9 +247,9 @@ export default function TicketTrackingClient({
                 </p>
               </div>
             </div>
-            <Link href={`/projects/${projectId}/work-review?status=pending_review`}>
+            <Link href={`/projects/${projectId}/work-tickets-view`}>
               <Button className="bg-yellow-600 hover:bg-yellow-700">
-                Review Now
+                View All Tickets
               </Button>
             </Link>
           </div>
@@ -531,11 +531,7 @@ function OutputCard({ output, basketId, projectId }: { output: WorkOutput; baske
         </div>
         <div className="flex items-center gap-2">
           {isPending && (
-            <Link href={`/projects/${projectId}/work-review?status=pending_review`}>
-              <Button variant="outline" size="sm" className="text-yellow-700 border-yellow-500/30 hover:bg-yellow-500/10">
-                Review
-              </Button>
-            </Link>
+            <Badge variant="warning">Pending</Badge>
           )}
           {isFileOutput && (
             <Button

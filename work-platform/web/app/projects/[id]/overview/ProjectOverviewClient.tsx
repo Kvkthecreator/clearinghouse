@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Plus, Zap, CheckCircle2, FileCheck, Clock, Eye } from 'lucide-react';
+import { Plus, Zap, CheckCircle2, FileCheck, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { ContextReadinessCard } from '@/app/projects/[id]/agents/_components/ContextReadinessCard';
@@ -197,20 +197,12 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
           </div>
           <div className="flex items-center gap-3">
             <Button
-              variant="outline"
               size="sm"
+              variant="outline"
               onClick={() => router.push(`/projects/${project.id}/work-tickets-view`)}
             >
               <Eye className="h-4 w-4 mr-1" />
               View Tickets
-            </Button>
-            <Button
-              size="sm"
-              variant={project.pendingReviewCount > 0 ? "default" : "outline"}
-              onClick={() => router.push(`/projects/${project.id}/work-review`)}
-            >
-              <Clock className="h-4 w-4 mr-1" />
-              Review Outputs
             </Button>
           </div>
         </div>

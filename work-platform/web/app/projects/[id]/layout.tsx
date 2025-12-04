@@ -4,6 +4,7 @@ import { getServerWorkspace } from "@/lib/workspaces/getServerWorkspace";
 import { createServerComponentClient } from "@/lib/supabase/clients";
 import { cookies } from "next/headers";
 import { ProjectNavigation } from "@/components/projects/ProjectNavigation";
+import ProjectLayoutClient from "./ProjectLayoutClient";
 
 export default async function ProjectLayout({
   params,
@@ -19,7 +20,7 @@ export default async function ProjectLayout({
   // Fetch project to ensure it exists and user has access
   const { data: project } = await supabase
     .from('projects')
-    .select('id, workspace_id')
+    .select('id, workspace_id, basket_id')
     .eq('id', id)
     .eq('workspace_id', ws.id)
     .maybeSingle();
@@ -31,7 +32,13 @@ export default async function ProjectLayout({
   return (
     <div className="min-h-screen bg-background text-foreground">
       <ProjectNavigation projectId={id} />
-      <div className="mx-auto">{children}</div>
+      <ProjectLayoutClient
+        projectId={id}
+        basketId={project.basket_id}
+        workspaceId={ws.id}
+      >
+        {children}
+      </ProjectLayoutClient>
     </div>
   );
 }

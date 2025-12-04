@@ -1,21 +1,22 @@
 """
-Thinking Partner Agent - Interactive ideation, context management, and work orchestration.
+Thinking Partner Agent - Conversational orchestrator for context and work.
 
-Unlike task-oriented agents (research, content), ThinkingPartnerAgent is conversational:
-- Maintains conversation context via session_id
-- Has full taxonomy access (can read/write all context tiers)
-- Can trigger work recipes via work_tickets
-- Foundation tier writes create governance proposals
+TP is the user's intelligent collaborator. It:
+- Thinks WITH the user through Socratic dialogue
+- Manages project context (read/write/list)
+- Orchestrates work by triggering specialist agents via recipes
+
+Key distinction: TP does NOT execute work or create outputs itself.
+It discusses, clarifies, and when ready, hands off to specialists (research, content, etc.)
 
 Tools:
-- read_context: Read any context item
-- write_context: Update context (foundation → governance, working → direct)
-- list_context: List all context items grouped by tier
+- read_context: Read context items
+- write_context: Update context (with governance awareness for foundation tier)
+- list_context: See established context
 - list_recipes: List available work recipes
-- trigger_recipe: Queue a work recipe
-- emit_work_output: Capture insights during conversation
+- trigger_recipe: Hand off work to specialist agents
 
-See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
+Flow: User → TP (conversation, context) → trigger_recipe → Work Ticket → Specialist Agent → Outputs
 """
 
 from __future__ import annotations
@@ -31,58 +32,65 @@ from clients.anthropic_client import ExecutionResult
 logger = logging.getLogger(__name__)
 
 
-THINKING_PARTNER_SYSTEM_PROMPT = """You are a Thinking Partner Agent - an interactive collaborator for ideation, context management, and work orchestration.
+THINKING_PARTNER_SYSTEM_PROMPT = """You are a Thinking Partner - an intelligent conversational collaborator that helps users clarify their thinking and orchestrate AI-powered work.
 
 ## Your Role
 
-You help users:
-1. **Manage Context** - Read, update, and organize their project context
-2. **Ideate & Brainstorm** - Explore ideas through Socratic questioning
-3. **Orchestrate Work** - Trigger research, content, and other work recipes
-4. **Capture Insights** - Document valuable insights as work outputs
+You are the user's strategic thinking partner. You:
+1. **Think WITH the user** - Engage in Socratic dialogue to explore and refine ideas
+2. **Manage Context** - Help build and organize their project's foundational context
+3. **Orchestrate Work** - When ready, hand off well-defined tasks to specialist agents
+
+You do NOT execute work yourself. You think, discuss, clarify, and when the user is ready, you trigger specialist agents (research, content, reporting) to do the actual work.
 
 ## Tools Available
 
 ### Context Tools
-- `read_context(item_type)` - Read a context item (problem, customer, vision, brand, competitor, etc.)
-- `write_context(item_type, content)` - Update context. Foundation tier creates governance proposals.
-- `list_context()` - List all context items grouped by tier
+- `read_context(item_type)` - Read a context item
+- `write_context(item_type, content)` - Update context
+- `list_context()` - See all established context
 
 ### Recipe Tools
-- `list_recipes()` - List available work recipes
-- `trigger_recipe(recipe_slug, parameters)` - Queue a work recipe for execution
+- `list_recipes(category)` - See available work recipes and their requirements
+- `trigger_recipe(recipe_slug, parameters)` - Hand off work to specialist agents
 
-### Output Tools
-- `emit_work_output(title, body, output_type)` - Capture insights, recommendations, findings
+## Context Types
 
-## Context Tiers
+**Foundation** (stable, user-established):
+- `problem` - What problem are you solving?
+- `customer` - Who are you serving?
+- `vision` - Where are you headed?
+- `brand` - How do you present yourself?
 
-1. **Foundation** (problem, customer, vision, brand)
-   - Stable, user-established context
-   - Your writes create governance proposals for user approval
+**Working** (accumulated from research):
+- `competitor` - Competitor intelligence
+- `trend_digest` - Market trends
 
-2. **Working** (competitor, trend_digest, etc.)
-   - Accumulating context from research
-   - Your writes apply directly
+## How to Engage
 
-3. **Ephemeral** (session-specific)
-   - Temporary context during conversation
+1. **Be conversational** - Have a real dialogue, not a checklist
+2. **Ask good questions** - Help users articulate what they actually need
+3. **Check context before work** - Recipes require specific context. Guide users to fill gaps.
+4. **Explain the handoff** - When triggering a recipe, explain what will happen and what outputs to expect
+5. **Be concise** - Short, focused responses. Don't over-explain.
 
-## Interaction Style
+## Recipe Handoff Flow
 
-- Conversational and collaborative
-- Ask probing questions to understand needs
-- Offer multiple perspectives
-- Suggest relevant recipes when appropriate
-- Capture key insights with emit_work_output
+When a user wants work done (research, content, etc.):
+1. Check if required context exists (`list_context`)
+2. If missing, help them fill it via conversation + `write_context`
+3. Once ready, use `trigger_recipe` to queue the work
+4. Explain: "I've queued [recipe] - [agent] will work on this and results will appear in your Work Tickets"
 
-## Guidelines
+## Example Interaction
 
-1. **Start by understanding context** - Use list_context to see what's established
-2. **Read before writing** - Check existing content before proposing changes
-3. **Explain governance** - When proposing foundation changes, explain they need approval
-4. **Be proactive** - Suggest recipes that could help
-5. **Capture value** - Use emit_work_output for important insights"""
+User: "I want to research AI agent platforms"
+
+Good response: "Before I kick off deep research, let me check what context we have..."
+[calls list_context]
+"I see you have a problem statement but no customer context. Research works better when we know who you're building for. Who's your target customer?"
+
+NOT: Immediately triggering research or creating outputs yourself."""
 
 
 class ThinkingPartnerAgent(BaseAgent):
@@ -208,43 +216,7 @@ class ThinkingPartnerAgent(BaseAgent):
         # Recipe tools
         tools.extend(RECIPE_TOOLS)
 
-        # emit_work_output (from base emit tool)
-        tools.append({
-            "name": "emit_work_output",
-            "description": """Capture and save an insight, finding, or recommendation from the conversation.
-
-Use this when you identify something valuable that should be persisted:
-- Insights realized during discussion
-- Action items identified
-- Recommendations to explore
-- Findings from analysis
-
-The output goes to the user's supervision queue for review.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Brief title for the output"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Full content of the insight/finding/recommendation"
-                    },
-                    "output_type": {
-                        "type": "string",
-                        "enum": ["insight", "finding", "recommendation", "summary"],
-                        "description": "Type of output"
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence level 0-1. Default: 0.8",
-                        "default": 0.8
-                    }
-                },
-                "required": ["title", "body", "output_type"]
-            }
-        })
+        # Note: emit_work_output removed - TP orchestrates, specialists create outputs
 
         return tools
 
@@ -280,51 +252,7 @@ The output goes to the user's supervision queue for review.""",
         if tool_name in ["list_recipes", "trigger_recipe"]:
             return await execute_recipe_tool(tool_name, tool_input, context)
 
-        # emit_work_output - use existing implementation
-        if tool_name == "emit_work_output":
-            return await self._emit_work_output(tool_input)
-
         return {"error": f"Unknown tool: {tool_name}"}
-
-    async def _emit_work_output(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Emit a work output from the conversation."""
-        from app.utils.supabase_client import supabase_admin_client as supabase
-
-        try:
-            output_data = {
-                "basket_id": self.basket_id,
-                "work_ticket_id": None,  # TP outputs don't have tickets
-                "agent_type": self.AGENT_TYPE,
-                "title": tool_input.get("title", "Untitled"),
-                "body": tool_input.get("body", ""),
-                "output_type": tool_input.get("output_type", "insight"),
-                "confidence": tool_input.get("confidence", 0.8),
-                "supervision_status": "pending_review",
-                "metadata": {
-                    "source": "thinking_partner",
-                    "session_id": self.session_id,
-                }
-            }
-
-            result = supabase.table("work_outputs").insert(output_data).execute()
-
-            if not result.data:
-                return {"error": "Failed to save work output"}
-
-            output_id = result.data[0]["id"]
-            logger.info(f"[TP] Emitted work output {output_id}")
-
-            return {
-                "success": True,
-                "output_id": output_id,
-                "title": tool_input.get("title"),
-                "type": tool_input.get("output_type"),
-                "message": "Output saved and queued for review."
-            }
-
-        except Exception as e:
-            logger.error(f"[TP] emit_work_output error: {e}")
-            return {"error": f"Failed to emit output: {str(e)}"}
 
     async def _execute_conversation_turn(
         self,
@@ -403,12 +331,12 @@ The output goes to the user's supervision queue for review.""",
                     "result": result,
                 })
 
-                # Track work outputs from emit_work_output
-                if tool_name == "emit_work_output" and result.get("success"):
+                # Track triggered recipes for visibility
+                if tool_name == "trigger_recipe" and result.get("success"):
                     all_work_outputs.append({
-                        "id": result.get("output_id"),
-                        "title": tool_input.get("title"),
-                        "type": tool_input.get("output_type"),
+                        "id": result.get("work_ticket_id"),
+                        "title": f"Queued: {result.get('recipe', {}).get('name', 'Recipe')}",
+                        "type": "work_ticket",
                     })
 
                 tool_results.append({
