@@ -598,7 +598,7 @@ Make it distinct enough for A/B testing."""
                 "source_context_ids": [],
                 "metadata": {
                     "provider": "gemini",
-                    "model": self.gemini.model,
+                    "model": self.gemini.text_model,
                 },
             }
 

@@ -375,9 +375,9 @@ async def execute_content_workflow(
                         "execution_time_ms": execution_time_ms,
                         "output_count": len(result.work_outputs),
                         "token_usage": {
-                            "input_tokens": result.input_tokens,
-                            "output_tokens": result.output_tokens,
-                            "cache_read_tokens": result.cache_read_tokens,
+                            "input_tokens": getattr(result, 'input_tokens', 0),
+                            "output_tokens": getattr(result, 'output_tokens', 0),
+                            "cache_read_tokens": getattr(result, 'cache_read_tokens', 0),
                         },
                     }
 
@@ -520,16 +520,16 @@ async def execute_content_workflow(
                 "output_count": len(result.work_outputs),
                 "recipe_slug": recipe.slug if recipe else None,
                 "token_usage": {
-                    "input_tokens": result.input_tokens,
-                    "output_tokens": result.output_tokens,
-                    "cache_read_tokens": result.cache_read_tokens,
+                    "input_tokens": getattr(result, 'input_tokens', 0),
+                    "output_tokens": getattr(result, 'output_tokens', 0),
+                    "cache_read_tokens": getattr(result, 'cache_read_tokens', 0),
                 },
             },
         }).eq("id", work_ticket_id).execute()
 
         logger.info(
             f"[CONTENT WORKFLOW] Complete: {len(result.work_outputs)} outputs "
-            f"in {execution_time_ms}ms, tokens={result.input_tokens}+{result.output_tokens}"
+            f"in {execution_time_ms}ms, tokens={getattr(result, 'input_tokens', 0)}+{getattr(result, 'output_tokens', 0)}"
         )
 
         return ContentWorkflowResponse(
@@ -541,9 +541,9 @@ async def execute_content_workflow(
             message=f"Content complete: {len(result.work_outputs)} outputs generated",
             recipe_used=recipe.slug if recipe else None,
             token_usage={
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-                "cache_read_tokens": result.cache_read_tokens,
+                "input_tokens": getattr(result, 'input_tokens', 0),
+                "output_tokens": getattr(result, 'output_tokens', 0),
+                "cache_read_tokens": getattr(result, 'cache_read_tokens', 0),
             },
         )
 
