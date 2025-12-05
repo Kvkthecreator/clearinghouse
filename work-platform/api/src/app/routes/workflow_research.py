@@ -273,6 +273,7 @@ async def execute_research_workflow(
                         task=enhanced_task,
                         research_scope=_research_scope,
                         depth=_depth,
+                        recipe_slug=_recipe.slug if _recipe else None,
                     ))
                     execution_time_ms = int((time.time() - start_time) * 1000)
 
@@ -372,6 +373,7 @@ async def execute_research_workflow(
             task=enhanced_task,
             research_scope=request.research_scope,
             depth=request.depth,
+            recipe_slug=recipe.slug if recipe else None,
         )
         execution_time_ms = int((time.time() - start_time) * 1000)
 

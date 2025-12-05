@@ -189,6 +189,49 @@ The search will return relevant results that you should analyze and synthesize."
                     },
                     "required": ["query"]
                 }
+            },
+            "emit_context_item": {
+                "name": "emit_context_item",
+                "description": """Emit a context item directly to the project's context store.
+
+Use this tool for continuous research recipes (trend-digest, market-research, competitor-monitor)
+where the output is a periodic digest that should be stored as context, not reviewed as work output.
+
+Context items are immediately available to other agents and the user's context view.
+Each context item is time-stamped and accumulates (non-singleton schemas).
+
+When to use:
+- Trend digests (schema_id: "trend_digest")
+- Market intelligence (schema_id: "market_intel")
+- Competitor snapshots (schema_id: "competitor_snapshot")
+
+Do NOT use for findings that need user review - use emit_work_output instead.""",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "schema_id": {
+                            "type": "string",
+                            "description": "Context schema type: trend_digest, market_intel, competitor_snapshot",
+                            "enum": ["trend_digest", "market_intel", "competitor_snapshot"]
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Title for the context item (e.g., 'Week of Dec 2-8, 2024')"
+                        },
+                        "content": {
+                            "type": "object",
+                            "description": "Structured content matching the schema",
+                            "properties": {
+                                "summary": {"type": "string"},
+                                "sections": {"type": "array"},
+                                "highlights": {"type": "array"},
+                                "implications": {"type": "array"},
+                                "period": {"type": "string"}
+                            }
+                        }
+                    },
+                    "required": ["schema_id", "title", "content"]
+                }
             }
         }
 
@@ -217,6 +260,8 @@ The search will return relevant results that you should analyze and synthesize."
         """
         if tool_name == "emit_work_output":
             return await self._emit_work_output(tool_input, tool_context)
+        elif tool_name == "emit_context_item":
+            return await self._emit_context_item(tool_input, tool_context)
         elif tool_name == "web_search":
             return await self._web_search(tool_input, tool_context)
         else:
@@ -317,6 +362,94 @@ The search will return relevant results that you should analyze and synthesize."
                 "status": "error",
                 "error": str(e),
                 "message": "Unexpected error creating work output"
+            }
+
+    async def _emit_context_item(
+        self,
+        tool_input: Dict[str, Any],
+        tool_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Emit context item directly to context_items table.
+
+        Used by continuous research recipes (trend-digest, market-research, competitor-monitor)
+        to store periodic digests as project context.
+
+        Args:
+            tool_input: Tool input with schema_id, title, content
+            tool_context: Context with basket_id, work_ticket_id, agent_type
+
+        Returns:
+            Result with context_item_id or error
+        """
+        basket_id = tool_context.get("basket_id")
+        work_ticket_id = tool_context.get("work_ticket_id")
+        agent_type = tool_context.get("agent_type", "research")
+
+        if not basket_id:
+            return {"error": "Missing basket_id in tool_context"}
+
+        schema_id = tool_input.get("schema_id")
+        title = tool_input.get("title")
+        content = tool_input.get("content", {})
+
+        logger.info(
+            f"emit_context_item: schema={schema_id}, title={title}, "
+            f"basket={basket_id}"
+        )
+
+        try:
+            # Insert directly into context_items table via Supabase
+            from app.utils.supabase_client import supabase_admin_client as supabase
+
+            # Ensure content is properly formatted
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except Exception:
+                    content = {"raw": content}
+
+            # Add metadata
+            content["_generated_by"] = agent_type
+            content["_work_ticket_id"] = work_ticket_id
+            content["_generated_at"] = __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat()
+
+            insert_data = {
+                "basket_id": basket_id,
+                "schema_id": schema_id,
+                "title": title,
+                "content": content,
+                "created_by": "agent",  # Mark as agent-generated
+            }
+
+            response = supabase.table("context_items").insert(insert_data).execute()
+
+            if response.data and len(response.data) > 0:
+                context_item_id = response.data[0].get("id")
+                logger.info(f"emit_context_item SUCCESS: id={context_item_id}")
+
+                return {
+                    "status": "success",
+                    "context_item_id": context_item_id,
+                    "schema_id": schema_id,
+                    "title": title,
+                    "message": f"Context item '{title}' created successfully"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": "No data returned from insert",
+                    "message": "Failed to create context item"
+                }
+
+        except Exception as e:
+            logger.error(f"emit_context_item failed: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": "Unexpected error creating context item"
             }
 
     async def _web_search(

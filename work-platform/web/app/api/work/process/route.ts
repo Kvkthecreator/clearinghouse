@@ -38,19 +38,22 @@ interface ClaimedTicket {
 
 // Map agent_type to workflow endpoint
 const AGENT_WORKFLOW_ENDPOINTS: Record<string, string> = {
+  // Agent types
   research: "/api/work/research/execute",
   content: "/api/work/content/execute",
   reporting: "/api/work/reporting/execute",
-  // Recipe slugs that map to agent types
-  deep_research: "/api/work/research/execute",
-  competitor_analysis: "/api/work/research/execute",
-  trend_digest: "/api/work/research/execute",
-  blog_post: "/api/work/content/execute",
-  social_post: "/api/work/content/execute",
+  // Research recipes (continuous monitoring)
+  "trend-digest": "/api/work/research/execute",
+  "market-research": "/api/work/research/execute",
+  "competitor-monitor": "/api/work/research/execute",
+  // Research recipes (on-demand)
+  "research-investigation": "/api/work/research/execute",
+  // Content recipes
   "social-media-post": "/api/work/content/execute",
   "twitter-thread": "/api/work/content/execute",
+  "blog-article": "/api/work/content/execute",
+  // Reporting recipes
   "executive-summary-deck": "/api/work/reporting/execute",
-  "research-deep-dive": "/api/work/research/execute",
 };
 
 // POST /api/work/process - Process pending tickets
