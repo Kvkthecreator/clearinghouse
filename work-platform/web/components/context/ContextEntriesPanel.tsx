@@ -352,6 +352,14 @@ export default function ContextEntriesPanel({
                         <div className="flex items-center gap-2">
                           {hasContent ? (
                             <>
+                              {/* View Details Link */}
+                              <Link
+                                href={`/projects/${projectId}/context/${entry.id}`}
+                                className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Link>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -636,8 +644,16 @@ function AgentInsightCard({
             )}
           </div>
 
-          {/* Expand/collapse */}
+          {/* Actions */}
           <div className="flex items-center gap-2">
+            {/* View Details Link */}
+            <Link
+              href={`/projects/${projectId}/context/${entry.id}`}
+              className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-purple-500/10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink className="h-4 w-4 text-purple-600" />
+            </Link>
             {isExpanded ? (
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
             ) : (
