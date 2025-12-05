@@ -48,10 +48,11 @@ export interface Recipe {
 }
 
 export interface ParameterSchema {
-  type: 'range' | 'text' | 'multi-select'
+  type: 'range' | 'text' | 'multi-select' | 'multiselect' | 'tags'
   label: string
   optional?: boolean
   default?: any
+  placeholder?: string
 
   // Range-specific
   min?: number
