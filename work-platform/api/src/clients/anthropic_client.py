@@ -416,12 +416,20 @@ Do NOT use for findings that need user review - use emit_work_output instead."""
                 __import__("datetime").timezone.utc
             ).isoformat()
 
+            # Map schema_id to item_type for database constraint
+            # trend_digest, market_intel, competitor_snapshot all map to their schema_id as item_type
+            item_type = schema_id  # Use schema_id as item_type (e.g., "trend_digest")
+
             insert_data = {
                 "basket_id": basket_id,
+                "tier": "working",  # Agent-generated insights are working tier
+                "item_type": item_type,
                 "schema_id": schema_id,
                 "title": title,
                 "content": content,
                 "created_by": "agent",  # Mark as agent-generated
+                "source_type": "agent",  # Track origin
+                "source_ref": {"work_ticket_id": work_ticket_id, "agent_type": agent_type},
             }
 
             response = supabase.table("context_items").insert(insert_data).execute()
