@@ -661,6 +661,21 @@ export default function RecipeConfigureClient({
                     placeholder={param.placeholder || "Type and press Enter"}
                   />
                 )}
+
+                {param.type === "boolean" && (
+                  <label htmlFor={key} className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      id={key}
+                      type="checkbox"
+                      checked={formValues[key] ?? param.default ?? false}
+                      onChange={(e) => handleInputChange(key, e.target.checked)}
+                      className="w-5 h-5 text-primary border-input rounded focus:ring-primary"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {param.placeholder || "Enable this option"}
+                    </span>
+                  </label>
+                )}
               </div>
             ))}
           </div>

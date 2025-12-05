@@ -100,15 +100,32 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
   const outputFormat = formatDisplayMap[rawFormat] || rawFormat.toUpperCase();
 
   // Transform parameters to add missing fields (label, required)
+  // Map database types to UI component types
+  const typeMap: Record<string, string> = {
+    'string': 'text',      // string → text input
+    'boolean': 'boolean',  // boolean → checkbox
+    'number': 'number',    // number → number input
+    'integer': 'number',   // integer → number input
+    'array': 'multitext',  // array → multiline text
+  };
+
   const transformedParams: Record<string, any> = {};
   Object.entries(recipeParams).forEach(([key, param]: [string, any]) => {
     if (key === 'output_format') return; // Skip output_format, it's metadata
 
+    // Determine the UI type
+    let uiType = typeMap[param.type] || param.type || 'text';
+
+    // If string type has options, it's a select
+    if ((param.type === 'string' || uiType === 'text') && param.options && param.options.length > 0) {
+      uiType = 'select';
+    }
+
     transformedParams[key] = {
-      type: param.type || 'text',
-      label: param.description || key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-      required: !param.optional,
-      placeholder: param.description,
+      type: uiType,
+      label: param.title || param.description || key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+      required: param.required === true,
+      placeholder: param.placeholder || param.description,
       default: param.default,
       min: param.min,
       max: param.max,
