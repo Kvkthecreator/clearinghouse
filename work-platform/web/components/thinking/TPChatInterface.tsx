@@ -18,6 +18,7 @@ import type { TPMessage, TPContextChange, WorkOutput } from '@/lib/types/thinkin
 import { useTPChat } from '@/hooks/useTPChat';
 import { useActiveTPSession } from '@/hooks/useTPSession';
 import { TPMessageList } from './TPMessageList';
+import { useChatFirstLayout } from './ChatFirstLayout';
 
 interface TPChatInterfaceProps {
   basketId: string;
@@ -26,6 +27,11 @@ interface TPChatInterfaceProps {
   onTPStateChange?: (phase: string) => void;
   onContextChange?: (changes: TPContextChange[]) => void;
   onWorkOutput?: (outputs: WorkOutput[]) => void;
+  // Navigation callbacks (can be provided or use ChatFirstLayout context)
+  onNavigateToContext?: (itemId?: string) => void;
+  onNavigateToOutput?: (outputId?: string) => void;
+  onNavigateToTicket?: (ticketId?: string) => void;
+  onViewAllContext?: () => void;
 }
 
 export function TPChatInterface({
@@ -35,10 +41,50 @@ export function TPChatInterface({
   onTPStateChange,
   onContextChange,
   onWorkOutput,
+  onNavigateToContext: propNavigateToContext,
+  onNavigateToOutput: propNavigateToOutput,
+  onNavigateToTicket: propNavigateToTicket,
+  onViewAllContext: propViewAllContext,
 }: TPChatInterfaceProps) {
   const [inputMessage, setInputMessage] = useState('');
   const [showSessionList, setShowSessionList] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Get layout context for navigation (fallback if not in ChatFirstLayout)
+  const layoutContext = useChatFirstLayout();
+
+  // Navigation handlers - use props if provided, otherwise use layout context
+  const handleNavigateToContext = useCallback((itemId?: string) => {
+    if (propNavigateToContext) {
+      propNavigateToContext(itemId);
+    } else if (layoutContext.openDetailPanel) {
+      layoutContext.openDetailPanel('context', itemId);
+    }
+  }, [propNavigateToContext, layoutContext]);
+
+  const handleNavigateToOutput = useCallback((outputId?: string) => {
+    if (propNavigateToOutput) {
+      propNavigateToOutput(outputId);
+    } else if (layoutContext.openDetailPanel) {
+      layoutContext.openDetailPanel('outputs', outputId);
+    }
+  }, [propNavigateToOutput, layoutContext]);
+
+  const handleNavigateToTicket = useCallback((ticketId?: string) => {
+    if (propNavigateToTicket) {
+      propNavigateToTicket(ticketId);
+    } else if (layoutContext.openDetailPanel) {
+      layoutContext.openDetailPanel('tickets', ticketId);
+    }
+  }, [propNavigateToTicket, layoutContext]);
+
+  const handleViewAllContext = useCallback(() => {
+    if (propViewAllContext) {
+      propViewAllContext();
+    } else if (layoutContext.openDetailPanel) {
+      layoutContext.openDetailPanel('context');
+    }
+  }, [propViewAllContext, layoutContext]);
 
   // Session management
   const {
@@ -205,7 +251,13 @@ export function TPChatInterface({
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4">
-        <TPMessageList messages={messages} />
+        <TPMessageList
+          messages={messages}
+          onNavigateToContext={handleNavigateToContext}
+          onNavigateToOutput={handleNavigateToOutput}
+          onNavigateToTicket={handleNavigateToTicket}
+          onViewAllContext={handleViewAllContext}
+        />
         <div ref={messagesEndRef} />
 
         {/* Loading indicator */}
