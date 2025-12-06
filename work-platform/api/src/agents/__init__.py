@@ -18,6 +18,11 @@ Architecture:
 - Multi-provider support via factory pattern
 - Tool execution via substrate-API HTTP
 - Streaming support for frontend updates
+
+Phase 5 Optimizations:
+- Model tiering: Haiku for simple, Sonnet for orchestration
+- Prompt caching: Ephemeral cache control for cost reduction
+- Token budget management: Track and enforce limits
 """
 
 import os
@@ -29,6 +34,26 @@ from .content_agent import ContentAgent, create_content_agent
 from .reporting_agent import ReportingAgent, create_reporting_agent
 from .thinking_partner_agent import ThinkingPartnerAgent, create_thinking_partner_agent
 from .gemini_content_agent import GeminiContentAgent, create_gemini_content_agent
+from .model_config import (
+    ModelTier,
+    ModelConfig,
+    OperationConfig,
+    TokenBudget,
+    CacheConfig,
+    get_model_for_tier,
+    get_model_id,
+    get_operation_config,
+    get_token_budget,
+    build_cached_system_prompt,
+    estimate_prompt_tokens,
+    should_use_caching,
+    DEFAULT_CACHE_CONFIG,
+)
+from .token_tracker import (
+    TokenTracker,
+    TurnMetrics,
+    create_tracker,
+)
 
 
 def get_content_agent(
@@ -82,6 +107,7 @@ def get_content_agent(
 
 
 __all__ = [
+    # Agents
     "BaseAgent",
     "AgentContext",
     "ResearchAgent",
@@ -95,4 +121,24 @@ __all__ = [
     "create_reporting_agent",
     "ThinkingPartnerAgent",
     "create_thinking_partner_agent",
+
+    # Model configuration (Phase 5)
+    "ModelTier",
+    "ModelConfig",
+    "OperationConfig",
+    "TokenBudget",
+    "CacheConfig",
+    "get_model_for_tier",
+    "get_model_id",
+    "get_operation_config",
+    "get_token_budget",
+    "build_cached_system_prompt",
+    "estimate_prompt_tokens",
+    "should_use_caching",
+    "DEFAULT_CACHE_CONFIG",
+
+    # Token tracking (Phase 5)
+    "TokenTracker",
+    "TurnMetrics",
+    "create_tracker",
 ]

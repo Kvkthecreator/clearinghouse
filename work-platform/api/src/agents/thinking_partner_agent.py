@@ -17,6 +17,11 @@ Tools:
 - trigger_recipe: Hand off work to specialist agents
 
 Flow: User → TP (conversation, context) → trigger_recipe → Work Ticket → Specialist Agent → Outputs
+
+Phase 5 Optimizations:
+- Model tiering: Uses Sonnet for orchestration, can downgrade to Haiku for simple queries
+- Prompt caching: System prompt cached with ephemeral cache control
+- Token budget: Reserved space for context and tools
 """
 
 from __future__ import annotations
@@ -27,6 +32,15 @@ from typing import Any, Dict, List, Optional
 from .base_agent import BaseAgent, AgentContext
 from .tools.context_tools import CONTEXT_TOOLS, execute_context_tool
 from .tools.recipe_tools import RECIPE_TOOLS, execute_recipe_tool
+from .model_config import (
+    ModelTier,
+    get_model_id,
+    get_operation_config,
+    get_token_budget,
+    build_cached_system_prompt,
+    CacheConfig,
+    DEFAULT_CACHE_CONFIG,
+)
 from clients.anthropic_client import ExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -102,10 +116,25 @@ class ThinkingPartnerAgent(BaseAgent):
     - Full context taxonomy access
     - Recipe triggering capability
     - Governance-aware context writes
+
+    Phase 5 Optimizations:
+    - Model tiering: Sonnet for orchestration, Haiku for simple queries
+    - Prompt caching: Static system prompt cached for cost reduction
+    - Token budget: Manages context/tool reservations
     """
 
     AGENT_TYPE = "thinking_partner"
     SYSTEM_PROMPT = THINKING_PARTNER_SYSTEM_PROMPT
+
+    # Cache configuration for TP
+    CACHE_CONFIG = CacheConfig(
+        min_cacheable_tokens=1024,
+        cache_control_type="ephemeral",
+        cache_system_prompt=True,
+        cache_static_context=True,  # Foundation tier context
+        cache_tools=True,
+        cache_conversation=False,    # Don't cache dynamic conversation
+    )
 
     def __init__(
         self,
@@ -115,7 +144,8 @@ class ThinkingPartnerAgent(BaseAgent):
         user_id: str,
         session_id: Optional[str] = None,
         user_jwt: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: Optional[str] = None,  # None = auto-select based on operation
+        operation: str = "tp_conversation",  # For model tiering
     ):
         """
         Initialize ThinkingPartnerAgent.
@@ -127,17 +157,26 @@ class ThinkingPartnerAgent(BaseAgent):
             user_id: User ID for audit trail
             session_id: TP session ID for tool context
             user_jwt: Optional user JWT for substrate auth
-            model: Claude model to use
+            model: Claude model to use (None = auto-select)
+            operation: Operation type for model tiering
         """
+        # Get operation config for model tiering
+        self.operation = operation
+        op_config = get_operation_config(operation)
+
+        # Auto-select model based on operation if not specified
+        selected_model = model or get_model_id(op_config.default_tier)
+
         super().__init__(
             basket_id=basket_id,
             workspace_id=workspace_id,
             work_ticket_id=work_ticket_id or "tp_session",  # Fallback for base class
             user_id=user_id,
             user_jwt=user_jwt,
-            model=model,
+            model=selected_model,
         )
         self.session_id = session_id
+        self.token_budget = get_token_budget(operation)
 
     async def execute(
         self,
@@ -196,7 +235,7 @@ class ThinkingPartnerAgent(BaseAgent):
         return result
 
     def _build_tp_system_prompt(self, context_prompt: str) -> str:
-        """Build system prompt with context section."""
+        """Build system prompt with context section (legacy string format)."""
         prompt_parts = [self.SYSTEM_PROMPT]
 
         if context_prompt:
@@ -207,6 +246,53 @@ class ThinkingPartnerAgent(BaseAgent):
 """)
 
         return "\n\n".join(prompt_parts)
+
+    def _build_cached_system_prompt(
+        self,
+        foundation_context: Optional[str] = None,
+        working_context: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Build system prompt with cache control blocks.
+
+        Optimized structure for Anthropic prompt caching:
+        1. Base system prompt (cached, ~2K tokens)
+        2. Foundation context (cached, stable)
+        3. Working context (not cached, dynamic)
+
+        Args:
+            foundation_context: Foundation tier context (problem, customer, brand, vision)
+            working_context: Working tier context (dynamic, from research)
+
+        Returns:
+            List of content blocks with cache_control
+        """
+        blocks = []
+
+        # Block 1: Base system prompt (always cached)
+        blocks.append({
+            "type": "text",
+            "text": self.SYSTEM_PROMPT,
+            "cache_control": {"type": self.CACHE_CONFIG.cache_control_type}
+        })
+
+        # Block 2: Foundation context (cached - stable, user-established)
+        if foundation_context:
+            blocks.append({
+                "type": "text",
+                "text": f"\n\n# Foundation Context\n\n{foundation_context}",
+                "cache_control": {"type": self.CACHE_CONFIG.cache_control_type}
+            })
+
+        # Block 3: Working context (NOT cached - dynamic, changes frequently)
+        if working_context:
+            blocks.append({
+                "type": "text",
+                "text": f"\n\n# Working Context\n\n{working_context}",
+                # No cache_control - this is dynamic
+            })
+
+        return blocks
 
     def _get_tp_tools(self) -> List[Dict[str, Any]]:
         """Get all TP tool definitions for Anthropic API."""
@@ -264,12 +350,19 @@ class ThinkingPartnerAgent(BaseAgent):
         Execute a single conversation turn with tool handling.
 
         Uses agentic loop to handle tool calls until final response.
+        Phase 5: Uses cached system prompt for cost optimization.
         """
         import anthropic
 
         messages = [{"role": "user", "content": user_message}]
         all_tool_calls = []
         all_work_outputs = []
+
+        # Token tracking for Phase 5 budget management
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_cache_read = 0
+        total_cache_creation = 0
 
         # Create Anthropic client
         client = anthropic.Anthropic()
@@ -280,13 +373,34 @@ class ThinkingPartnerAgent(BaseAgent):
         while iteration < max_iterations:
             iteration += 1
 
-            # Call Claude
+            # Call Claude with cached system prompt format
+            # Using array format with cache_control for prompt caching
             response = client.messages.create(
                 model=self.model,
-                max_tokens=4096,
-                system=system_prompt,
+                max_tokens=self.token_budget.max_output if hasattr(self, 'token_budget') else 4096,
+                system=[{
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}  # Enable caching
+                }],
                 messages=messages,
                 tools=tools,
+            )
+
+            # Track token usage
+            usage = response.usage
+            total_input_tokens += usage.input_tokens
+            total_output_tokens += usage.output_tokens
+
+            # Check for cache usage (if available)
+            if hasattr(usage, 'cache_read_input_tokens'):
+                total_cache_read += usage.cache_read_input_tokens or 0
+            if hasattr(usage, 'cache_creation_input_tokens'):
+                total_cache_creation += usage.cache_creation_input_tokens or 0
+
+            logger.debug(
+                f"[TP] Turn {iteration}: tokens={usage.input_tokens}+{usage.output_tokens}, "
+                f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)}"
             )
 
             # Extract response content
@@ -305,12 +419,18 @@ class ThinkingPartnerAgent(BaseAgent):
 
             # If no tool calls, we're done
             if not tool_uses:
+                logger.info(
+                    f"[TP] Complete: total_tokens={total_input_tokens}+{total_output_tokens}, "
+                    f"cache_read={total_cache_read}, cache_creation={total_cache_creation}"
+                )
                 return ExecutionResult(
                     response_text=response_text,
                     tool_calls=all_tool_calls,
                     work_outputs=all_work_outputs,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    cache_read_tokens=total_cache_read,
+                    cache_creation_tokens=total_cache_creation,
                 )
 
             # Execute tools
@@ -361,8 +481,10 @@ class ThinkingPartnerAgent(BaseAgent):
             response_text="I apologize, but I reached my processing limit. Please try a simpler request.",
             tool_calls=all_tool_calls,
             work_outputs=all_work_outputs,
-            input_tokens=0,
-            output_tokens=0,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cache_read_tokens=total_cache_read,
+            cache_creation_tokens=total_cache_creation,
         )
 
 
