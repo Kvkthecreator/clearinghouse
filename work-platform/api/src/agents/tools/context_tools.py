@@ -195,16 +195,19 @@ async def read_context(
         else:
             query = query.is_("item_key", "null")
 
-        result = query.single().execute()
+        # Use limit(1) instead of single() to handle duplicate rows gracefully
+        # PGRST116 error occurs when .single() returns 0 or 2+ rows
+        result = query.order("updated_at", desc=True).limit(1).execute()
 
-        if not result.data:
+        if not result.data or len(result.data) == 0:
             return {
                 "found": False,
                 "item_type": item_type,
                 "message": f"No {item_type} context item found. You can create one with write_context."
             }
 
-        item = result.data
+        # Get first item from array (we used limit(1) instead of single())
+        item = result.data[0]
         schema_info = item.pop("context_entry_schemas", {}) or {}
         content = item.get("content", {})
 
@@ -496,7 +499,7 @@ async def list_context(
 
         # Calculate overall completeness
         total_items = len(result.data or [])
-        total_score = sum(item.get("completeness_score", 0) for item in result.data or [])
+        total_score = sum((item.get("completeness_score") or 0) for item in result.data or [])
         overall_completeness = total_score / total_items if total_items > 0 else 0
 
         return {
