@@ -276,6 +276,131 @@ export function useDesktopContext() {
   return context;
 }
 
+/**
+ * Safe version that returns null if not within DesktopProvider.
+ * Use this when the component may or may not be within a DesktopProvider.
+ */
+export function useDesktopSafe(): ReturnType<typeof useDesktop> | null {
+  const context = useContext(DesktopContext);
+  if (!context) {
+    return null;
+  }
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useDesktopWithContext(context);
+}
+
+// Internal helper to create the useDesktop interface from context
+function useDesktopWithContext({ state, dispatch }: DesktopContextValue) {
+  // Window actions
+  const openWindow = useCallback(
+    (windowId: WindowId, highlight?: WindowHighlight) => {
+      dispatch({ type: 'OPEN_WINDOW', windowId, highlight });
+    },
+    [dispatch]
+  );
+
+  const closeWindow = useCallback(
+    (windowId: WindowId) => {
+      dispatch({ type: 'CLOSE_WINDOW', windowId });
+    },
+    [dispatch]
+  );
+
+  const closeAllWindows = useCallback(() => {
+    dispatch({ type: 'CLOSE_ALL_WINDOWS' });
+  }, [dispatch]);
+
+  const setHighlight = useCallback(
+    (windowId: WindowId, highlight: WindowHighlight) => {
+      dispatch({ type: 'SET_HIGHLIGHT', windowId, highlight });
+    },
+    [dispatch]
+  );
+
+  const clearHighlight = useCallback(
+    (windowId: WindowId) => {
+      dispatch({ type: 'CLEAR_HIGHLIGHT', windowId });
+    },
+    [dispatch]
+  );
+
+  // Dock actions
+  const setBadge = useCallback(
+    (windowId: WindowId, badge: number) => {
+      dispatch({ type: 'SET_BADGE', windowId, badge });
+    },
+    [dispatch]
+  );
+
+  const incrementBadge = useCallback(
+    (windowId: WindowId) => {
+      dispatch({ type: 'INCREMENT_BADGE', windowId });
+    },
+    [dispatch]
+  );
+
+  const clearBadge = useCallback(
+    (windowId: WindowId) => {
+      dispatch({ type: 'CLEAR_BADGE', windowId });
+    },
+    [dispatch]
+  );
+
+  const setPulse = useCallback(
+    (windowId: WindowId, pulse: boolean) => {
+      dispatch({ type: 'SET_PULSE', windowId, pulse });
+    },
+    [dispatch]
+  );
+
+  // State accessors
+  const isWindowOpen = useCallback(
+    (windowId: WindowId) => state.windows[windowId]?.isOpen ?? false,
+    [state.windows]
+  );
+
+  const getHighlight = useCallback(
+    (windowId: WindowId) => state.windows[windowId]?.highlight,
+    [state.windows]
+  );
+
+  const getBadge = useCallback(
+    (windowId: WindowId) => state.dock[windowId]?.badge,
+    [state.dock]
+  );
+
+  const isPulsing = useCallback(
+    (windowId: WindowId) => state.dock[windowId]?.pulse ?? false,
+    [state.dock]
+  );
+
+  return {
+    // State
+    activeWindow: state.activeWindow,
+    windows: state.windows,
+    dock: state.dock,
+
+    // Window actions
+    openWindow,
+    closeWindow,
+    closeAllWindows,
+    setHighlight,
+    clearHighlight,
+
+    // Dock actions
+    setBadge,
+    incrementBadge,
+    clearBadge,
+    setPulse,
+
+    // State accessors
+    isWindowOpen,
+    getHighlight,
+    getBadge,
+    isPulsing,
+  };
+}
+
 // ============================================================================
 // Convenience Hook with Actions
 // ============================================================================

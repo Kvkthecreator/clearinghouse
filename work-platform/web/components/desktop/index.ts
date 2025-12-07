@@ -8,7 +8,7 @@
  */
 
 // Core components
-export { DesktopProvider, useDesktop, useBasketId } from './DesktopProvider';
+export { DesktopProvider, useDesktop, useDesktopSafe, useBasketId } from './DesktopProvider';
 export type { WindowId, WindowState, WindowHighlight, DockItemState, DesktopState } from './DesktopProvider';
 export { Desktop } from './Desktop';
 export { Dock } from './Dock';

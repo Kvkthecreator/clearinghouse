@@ -1,12 +1,14 @@
 'use client';
 
 /**
- * TPChatInterface (v2.0)
+ * TPChatInterface (v3.0 - Desktop UI)
  *
  * Main chat interface for Thinking Partner.
- * Updated for session persistence and context management.
+ * Updated for Desktop UI with floating windows and tool-triggered window opening.
  *
- * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
+ * See:
+ * - /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
+ * - /docs/implementation/DESKTOP_UI_IMPLEMENTATION_PLAN.md
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -17,8 +19,10 @@ import { cn } from '@/lib/utils';
 import type { TPMessage, TPContextChange, WorkOutput } from '@/lib/types/thinking-partner';
 import { useTPChat } from '@/hooks/useTPChat';
 import { useActiveTPSession } from '@/hooks/useTPSession';
+import { useTPToolWindowIntegration } from '@/hooks/useTPToolWindowIntegration';
 import { TPMessageList } from './TPMessageList';
 import { useChatFirstLayout } from './ChatFirstLayout';
+import { useDesktopSafe } from '@/components/desktop/DesktopProvider';
 
 interface TPChatInterfaceProps {
   basketId: string;
@@ -53,38 +57,56 @@ export function TPChatInterface({
   // Get layout context for navigation (fallback if not in ChatFirstLayout)
   const layoutContext = useChatFirstLayout();
 
-  // Navigation handlers - use props if provided, otherwise use layout context
+  // Tool → Window integration (processes tool calls and opens/pulses windows)
+  // This hook is safe to call even if not in DesktopProvider (returns no-op functions)
+  const toolWindowIntegration = useTPToolWindowIntegration({
+    autoOpen: false, // Don't auto-open, just pulse
+    showPulse: true,
+  });
+
+  // Get Desktop context for window control (safe version that returns null if not available)
+  const desktopContext = useDesktopSafe();
+
+  // Navigation handlers - use props if provided, then Desktop context, then layout context
   const handleNavigateToContext = useCallback((itemId?: string) => {
     if (propNavigateToContext) {
       propNavigateToContext(itemId);
+    } else if (desktopContext) {
+      desktopContext.openWindow('context', itemId ? { itemIds: [itemId], action: 'reading' } : undefined);
     } else if (layoutContext.openDetailPanel) {
       layoutContext.openDetailPanel('context', itemId);
     }
-  }, [propNavigateToContext, layoutContext]);
+  }, [propNavigateToContext, desktopContext, layoutContext]);
 
   const handleNavigateToOutput = useCallback((outputId?: string) => {
     if (propNavigateToOutput) {
       propNavigateToOutput(outputId);
+    } else if (desktopContext) {
+      desktopContext.openWindow('outputs', outputId ? { itemIds: [outputId], action: 'reading' } : undefined);
     } else if (layoutContext.openDetailPanel) {
       layoutContext.openDetailPanel('outputs', outputId);
     }
-  }, [propNavigateToOutput, layoutContext]);
+  }, [propNavigateToOutput, desktopContext, layoutContext]);
 
   const handleNavigateToTicket = useCallback((ticketId?: string) => {
     if (propNavigateToTicket) {
       propNavigateToTicket(ticketId);
+    } else if (desktopContext) {
+      desktopContext.openWindow('work', ticketId ? { itemIds: [ticketId], action: 'reading' } : undefined);
     } else if (layoutContext.openDetailPanel) {
       layoutContext.openDetailPanel('tickets', ticketId);
     }
-  }, [propNavigateToTicket, layoutContext]);
+  }, [propNavigateToTicket, desktopContext, layoutContext]);
 
   const handleViewAllContext = useCallback(() => {
     if (propViewAllContext) {
       propViewAllContext();
+    } else if (desktopContext) {
+      desktopContext.openWindow('context');
     } else if (layoutContext.openDetailPanel) {
       layoutContext.openDetailPanel('context');
     }
-  }, [propViewAllContext, layoutContext]);
+  }, [propViewAllContext, desktopContext, layoutContext]);
 
   // Session management
   const {
@@ -97,6 +119,21 @@ export function TPChatInterface({
     archiveCurrentSession,
   } = useActiveTPSession(basketId);
 
+  // Wrap context/output callbacks to integrate with Desktop windows
+  const handleContextChange = useCallback((changes: TPContextChange[]) => {
+    // Process context changes for window badges/pulses
+    toolWindowIntegration.processContextChanges(changes);
+    // Call original callback
+    onContextChange?.(changes);
+  }, [toolWindowIntegration, onContextChange]);
+
+  const handleWorkOutput = useCallback((outputs: WorkOutput[]) => {
+    // Process work outputs for window badges/pulses
+    toolWindowIntegration.processWorkOutputs(outputs);
+    // Call original callback
+    onWorkOutput?.(outputs);
+  }, [toolWindowIntegration, onWorkOutput]);
+
   // Chat state
   const {
     messages,
@@ -107,13 +144,21 @@ export function TPChatInterface({
     loadMessages,
     lastContextChanges,
     lastWorkOutputs,
+    lastToolCalls,
   } = useTPChat({
     basketId,
     sessionId,
     initialMessages: session?.messages || [],
-    onContextChange,
-    onWorkOutput,
+    onContextChange: handleContextChange,
+    onWorkOutput: handleWorkOutput,
   });
+
+  // Process tool calls for window integration
+  useEffect(() => {
+    if (lastToolCalls.length > 0) {
+      toolWindowIntegration.processToolCalls(lastToolCalls);
+    }
+  }, [lastToolCalls, toolWindowIntegration]);
 
   // Load messages when session changes
   useEffect(() => {
