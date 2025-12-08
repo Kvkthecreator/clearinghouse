@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from infra.utils.supabase import supabase_admin
+from auth.supabase_admin import supabase_admin
 
 log = logging.getLogger("uvicorn.error")
 
