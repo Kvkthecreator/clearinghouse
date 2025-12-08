@@ -19,7 +19,7 @@ export default function LandingPage() {
               Documentation
             </Link>
             <Link
-              href="/login"
+              href="/auth/login"
               className="bg-black text-white px-4 py-2 rounded-lg hover:bg-neutral-800 transition"
             >
               Sign In
@@ -42,7 +42,7 @@ export default function LandingPage() {
           </p>
           <div className="flex gap-4">
             <Link
-              href="/login"
+              href="/auth/login"
               className="bg-black text-white px-6 py-3 rounded-lg hover:bg-neutral-800 transition font-medium"
             >
               Get Started
