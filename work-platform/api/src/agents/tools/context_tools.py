@@ -37,7 +37,8 @@ Example: read_context(item_type="problem") returns the user's problem statement.
             "properties": {
                 "item_type": {
                     "type": "string",
-                    "description": "The type of context item to read (e.g., 'problem', 'customer', 'vision', 'brand', 'competitor')"
+                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot"],
+                    "description": "The type of context item to read. Must be one of the defined types."
                 },
                 "fields": {
                     "type": "array",
@@ -56,12 +57,11 @@ Example: read_context(item_type="problem") returns the user's problem statement.
         "name": "write_context",
         "description": """Create or update a context item.
 
-IMPORTANT: Foundation tier items (problem, customer, vision, brand) require user approval.
-When you write to foundation tier, a governance proposal is created and the user must approve it.
+IMPORTANT: You can ONLY write to these defined item types:
+- Foundation tier (require user approval): problem, customer, vision, brand
+- Working tier (written directly): competitor, trend_digest, competitor_snapshot
 
-Working tier items (competitor, trend_digest, etc.) are written directly.
-
-Use this to capture insights, update context based on conversation, or propose changes to foundation context.
+Do NOT invent new item types. If you need to record findings, insights, or analysis that don't fit these types, use conversation or trigger a research recipe which uses emit_work_output.
 
 Example: write_context(item_type="competitor", content={"name": "Acme", "strengths": ["Fast", "Cheap"]}, item_key="Acme")""",
         "input_schema": {
@@ -69,7 +69,8 @@ Example: write_context(item_type="competitor", content={"name": "Acme", "strengt
             "properties": {
                 "item_type": {
                     "type": "string",
-                    "description": "The type of context item to write"
+                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot"],
+                    "description": "The type of context item. Must be one of the defined types."
                 },
                 "content": {
                     "type": "object",
