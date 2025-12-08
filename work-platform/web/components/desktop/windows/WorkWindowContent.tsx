@@ -157,18 +157,26 @@ export function WorkWindowContent() {
     }
   }, [basketId]);
 
+  // Initial fetch
   useEffect(() => {
     fetchTickets();
-    // No longer need polling when realtime is active - only poll as fallback
-    if (!isConnected) {
-      const interval = setInterval(() => {
-        if (tickets.some((t) => t.status === 'running' || t.status === 'pending')) {
-          fetchTickets();
-        }
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [fetchTickets, tickets, isConnected]);
+  }, [fetchTickets]);
+
+  // Fallback polling when realtime is not connected
+  // Use a ref to check tickets without triggering re-renders
+  const ticketsRef = useRef(tickets);
+  ticketsRef.current = tickets;
+
+  useEffect(() => {
+    if (isConnected) return; // No polling needed when realtime is active
+
+    const interval = setInterval(() => {
+      if (ticketsRef.current.some((t) => t.status === 'running' || t.status === 'pending')) {
+        fetchTickets();
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchTickets, isConnected]);
 
   // Check if ticket is highlighted
   const isHighlighted = useCallback(
