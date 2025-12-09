@@ -15,7 +15,7 @@ from app.deps import get_db, close_db
 from middleware.auth import AuthMiddleware
 
 # Routes
-from app.routes import health, workspaces, catalogs, rights_entities, proposals, licenses, timeline
+from app.routes import health, workspaces, catalogs, rights_entities, proposals, licenses, timeline, assets, jobs
 
 log = logging.getLogger("uvicorn.error")
 
@@ -66,6 +66,8 @@ app.include_router(rights_entities.router, prefix="/api/v1", tags=["Rights Entit
 app.include_router(proposals.router, prefix="/api/v1", tags=["Governance"])
 app.include_router(licenses.router, prefix="/api/v1", tags=["Licensing"])
 app.include_router(timeline.router, prefix="/api/v1", tags=["Timeline"])
+app.include_router(assets.router, prefix="/api/v1", tags=["Assets"])
+app.include_router(jobs.router, prefix="/api/v1", tags=["Processing Jobs"])
 
 
 @app.get("/")
