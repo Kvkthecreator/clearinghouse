@@ -27,6 +27,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.exempt_prefixes = set(exempt_prefixes or [])
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        # CORS preflight requests (OPTIONS) should always be allowed through
+        # so that CORSMiddleware can handle them properly
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path or "/"
         dbg = request.headers.get("x-yarnnn-debug-auth") == "1"
 
