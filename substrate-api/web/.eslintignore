@@ -1,7 +1,0 @@
-*
-!app/baskets/**
-!components/basket/**
-!components/BasketCard.tsx
-!lib/reflection.ts
-!app/baskets/page.tsx
-!app/baskets/BasketsClient.tsx
