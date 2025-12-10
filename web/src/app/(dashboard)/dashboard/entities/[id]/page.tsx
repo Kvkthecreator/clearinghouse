@@ -1,14 +1,19 @@
-'use client'
+"use client"
 
-import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { entities, assets, jobs, type RightsEntity, type Asset } from '@/lib/api'
-import Link from 'next/link'
-import { ProcessingStatus, EmbeddingStatusBadge } from '@/components/ProcessingStatus'
-import { AssetUploader } from '@/components/AssetUploader'
-import { AssetGallery } from '@/components/AssetGallery'
-import { useEntityJobPolling } from '@/hooks/useJobPolling'
+import { useEffect, useState, useCallback } from "react"
+import Link from "next/link"
+import { useParams, useRouter } from "next/navigation"
+import { ArrowLeft, ShieldCheck, Sparkles } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import { entities, assets, jobs, type RightsEntity, type Asset } from "@/lib/api"
+import { ProcessingStatus, EmbeddingStatusBadge } from "@/components/ProcessingStatus"
+import { AssetUploader } from "@/components/AssetUploader"
+import { AssetGallery } from "@/components/AssetGallery"
+import { useEntityJobPolling } from "@/hooks/useJobPolling"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export default function EntityDetailPage() {
   const params = useParams()
@@ -104,82 +109,97 @@ export default function EntityDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-32" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Skeleton className="h-64 rounded-2xl lg:col-span-2" />
+          <Skeleton className="h-64 rounded-2xl" />
+        </div>
       </div>
     )
   }
 
   if (!entity) {
     return (
-      <div className="text-center py-12">
-        <h2 className="text-xl font-semibold text-slate-900">Entity not found</h2>
-        <button onClick={() => router.back()} className="text-blue-600 hover:underline mt-2 inline-block">
-          Go Back
-        </button>
+      <div className="py-12 text-center">
+        <h2 className="text-xl font-semibold">Entity not found</h2>
+        <Button variant="ghost" onClick={() => router.back()} className="mt-3 gap-2">
+          <ArrowLeft className="h-4 w-4" />
+          Go back
+        </Button>
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="mb-8">
-        <button onClick={() => router.back()} className="text-sm text-slate-500 hover:text-slate-700 mb-2 inline-flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-          </svg>
-          Back
-        </button>
-        <div className="flex items-start justify-between mt-2">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className={`px-2 py-1 text-xs font-medium rounded ${
-                entity.status === 'active' ? 'bg-green-100 text-green-800' :
-                entity.status === 'pending' ? 'bg-amber-100 text-amber-800' :
-                'bg-slate-100 text-slate-800'
-              }`}>
+      <div className="flex items-start justify-between">
+        <div className="space-y-3">
+          <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2 text-muted-foreground">
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Button>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={entity.status === "active" ? "success" : "outline"}>
                 {entity.status}
-              </span>
+              </Badge>
               <EmbeddingStatusBadge status={entity.embedding_status} />
-              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
-                {entity.rights_type}
-              </span>
+              <Badge variant="outline" className="capitalize">
+                {entity.rights_type.replace(/_/g, " ")}
+              </Badge>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">{entity.title}</h1>
-            <div className="flex items-center gap-4 mt-2 text-sm text-slate-500">
+            <h1 className="text-3xl font-bold tracking-tight">{entity.title}</h1>
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
               <span>Version {entity.version}</span>
               <span>Created {new Date(entity.created_at).toLocaleDateString()}</span>
-              {entity.entity_key && <span className="font-mono">{entity.entity_key}</span>}
+              {entity.entity_key && <span className="font-mono text-xs">{entity.entity_key}</span>}
             </div>
           </div>
-          <div className="flex gap-2">
-            {entity.embedding_status !== 'processing' && entity.embedding_status !== 'ready' && (
-              <button
-                onClick={handleTriggerEmbedding}
-                className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                Generate Embeddings
-              </button>
-            )}
-          </div>
+        </div>
+        <div className="flex gap-2">
+          {entity.embedding_status !== "processing" && entity.embedding_status !== "ready" && (
+            <Button variant="outline" onClick={handleTriggerEmbedding} className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              Generate embeddings
+            </Button>
+          )}
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 text-red-500 hover:text-red-700">Dismiss</button>
-        </div>
+        <Card className="border-destructive/30 bg-destructive/10">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <div>
+              <CardTitle className="text-destructive">Something went wrong</CardTitle>
+              <CardDescription className="text-destructive">{error}</CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setError(null)} className="text-destructive">
+              Dismiss
+            </Button>
+          </CardHeader>
+        </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="space-y-6 lg:col-span-2">
           {/* Assets Section */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-            <div className="p-6 border-b border-slate-200">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">Upload Assets</h2>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Upload assets</CardTitle>
+                  <CardDescription>Audio, images, video, contracts up to 50MB.</CardDescription>
+                </div>
+                <Badge variant="outline" className="gap-1 text-xs">
+                  <ShieldCheck className="h-4 w-4" />
+                  Stored with provenance
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
               {token && (
                 <AssetUploader
                   entityId={entityId}
@@ -187,114 +207,123 @@ export default function EntityDetailPage() {
                   onUploadComplete={handleAssetUpload}
                 />
               )}
-            </div>
-
-            <div className="p-6">
-              <h3 className="text-md font-medium text-slate-900 mb-4">Uploaded Files</h3>
               {token && (
-                <AssetGallery
-                  key={assetRefreshKey}
-                  entityId={entityId}
-                  token={token}
-                />
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">Uploaded files</h3>
+                  <AssetGallery key={assetRefreshKey} entityId={entityId} token={token} />
+                </div>
               )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {/* AI Permissions */}
           {entity.ai_permissions && Object.keys(entity.ai_permissions).length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">AI Permissions</h2>
-              <pre className="text-sm bg-slate-50 p-4 rounded-lg overflow-x-auto">
-                {JSON.stringify(entity.ai_permissions, null, 2)}
-              </pre>
-            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>AI permissions</CardTitle>
+                <CardDescription>Training, generation, and style allowances for this asset.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <pre className="max-h-80 overflow-x-auto rounded-lg bg-muted p-4 text-sm">
+                  {JSON.stringify(entity.ai_permissions, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
           )}
         </div>
 
         {/* Sidebar */}
         <div className="space-y-6">
           {/* Processing Jobs */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="font-semibold text-slate-900">Processing Jobs</h3>
-              {hasActiveJobs && (
-                <span className="text-xs text-blue-600 animate-pulse">Processing...</span>
-              )}
-            </div>
-            {entityJobs.length === 0 ? (
-              <div className="p-6 text-center text-sm text-slate-500">
-                No processing jobs yet
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle>Processing jobs</CardTitle>
+                <CardDescription>Embedding and asset analysis tasks.</CardDescription>
               </div>
-            ) : (
-              <div className="divide-y divide-slate-200 max-h-80 overflow-auto">
-                {entityJobs.map((job) => (
-                  <div key={job.id} className="p-4">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-slate-900 capitalize">
-                        {job.job_type.replace(/_/g, ' ')}
-                      </span>
-                      <ProcessingStatus status={job.status} size="sm" />
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      {new Date(job.created_at).toLocaleString()}
-                    </p>
-                    {job.error_message && (
-                      <p className="text-xs text-red-600 mt-1 truncate" title={job.error_message}>
-                        {job.error_message}
+              {hasActiveJobs && <Badge variant="default">Processing…</Badge>}
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {entityJobs.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No processing jobs yet.</p>
+              ) : (
+                <div className="divide-y divide-border rounded-lg border border-border">
+                  {entityJobs.map((job) => (
+                    <div key={job.id} className="space-y-1 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold capitalize">
+                          {job.job_type.replace(/_/g, " ")}
+                        </span>
+                        <ProcessingStatus status={job.status} size="sm" />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(job.created_at).toLocaleString()}
                       </p>
-                    )}
-                    {/* Job actions */}
-                    <div className="flex gap-2 mt-2">
-                      {job.status === 'failed' && (
-                        <button
-                          onClick={() => handleJobRetry(job.id)}
-                          className="text-xs text-blue-600 hover:text-blue-700"
-                        >
-                          Retry
-                        </button>
+                      {job.error_message && (
+                        <p className="text-xs text-destructive mt-1 truncate" title={job.error_message}>
+                          {job.error_message}
+                        </p>
                       )}
-                      {(job.status === 'queued' || job.status === 'processing') && (
-                        <button
-                          onClick={() => handleJobCancel(job.id)}
-                          className="text-xs text-slate-500 hover:text-slate-700"
-                        >
-                          Cancel
-                        </button>
-                      )}
+                      <div className="flex gap-2 pt-1">
+                        {job.status === "failed" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={() => handleJobRetry(job.id)}
+                          >
+                            Retry
+                          </Button>
+                        )}
+                        {(job.status === "queued" || job.status === "processing") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-muted-foreground"
+                            onClick={() => handleJobCancel(job.id)}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Metadata */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <h3 className="font-semibold text-slate-900 mb-3">Details</h3>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-slate-500">ID</dt>
-                <dd className="font-mono text-slate-900 text-xs">{entity.id.slice(0, 8)}...</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Catalog</dt>
-                <dd>
-                  <Link href={`/dashboard/catalogs/${entity.catalog_id}`} className="text-blue-600 hover:underline">
-                    View
-                  </Link>
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Verification</dt>
-                <dd className="text-slate-900">{entity.verification_status}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Updated</dt>
-                <dd className="text-slate-900">{new Date(entity.updated_at).toLocaleDateString()}</dd>
-              </div>
-            </dl>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Details</CardTitle>
+              <CardDescription>Identifiers and verification state.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">ID</dt>
+                  <dd className="font-mono text-xs">{entity.id.slice(0, 8)}...</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Catalog</dt>
+                  <dd>
+                    <Link href={`/dashboard/catalogs/${entity.catalog_id}`} className="text-primary hover:underline">
+                      View
+                    </Link>
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Verification</dt>
+                  <dd className="capitalize">{entity.verification_status}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">Updated</dt>
+                  <dd>{new Date(entity.updated_at).toLocaleDateString()}</dd>
+                </div>
+              </dl>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
