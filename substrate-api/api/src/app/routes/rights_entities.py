@@ -137,6 +137,7 @@ async def list_rights_entities(
 
     entities = await db.fetch_all(f"""
         SELECT id, rights_type, title, entity_key, status, version,
+               embedding_status, verification_status,
                created_at, updated_at
         FROM rights_entities
         WHERE {' AND '.join(where_clauses)}
